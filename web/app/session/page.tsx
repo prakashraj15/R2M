@@ -53,8 +53,8 @@ export default function SessionPage() {
   return (
     <main style={{ maxWidth: 800, margin: "40px auto" }}>
       <BrandMark className="session-brand" />
-      <Link href="/" className="text-link">
-        ← Return to mock preview
+      <Link href="/demo/agent" className="text-link">
+        ← Live app
       </Link>
       <h1>Backend demo session</h1>
       <p className="body-copy">Demo authentication, not production.</p>

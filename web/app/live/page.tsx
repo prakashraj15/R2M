@@ -83,7 +83,9 @@ export default function LivePage() {
         <BrandMark className="session-brand" />
         <h1 style={{ margin: 0 }}>Live dashboard</h1>
         <span className="soft-note" style={{ padding: "4px 10px" }}>LIVE · real backend data · demo authentication</span>
-        <Link href="/" className="text-link">Dashboard (design preview)</Link>
+        <Link href="/demo/agent" className="text-link">OpsPilot chat</Link>
+        <Link href="/approvals" className="text-link">Approvals</Link>
+        <Link href="/agents/2246399b-c8bd-5598-b1c7-32a0da4d3d96" className="text-link">Agent workspace</Link>
       </div>
 
       <div style={{ ...box, marginTop: 16, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
