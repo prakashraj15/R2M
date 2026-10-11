@@ -69,7 +69,7 @@ Demo identities (`GET /api/v1/demo/identities`):
 | Release (new) | `POST /agents/{id}/releases/evaluate {installation_id, build_version, artifact_digest}` → checks, then `POST /agents/{id}/deployments/{depId}/deploy` (release manager). `GET /agents/{id}/deployments` |
 | Traces | `GET /agents/{id}/traces?cursor=` and `GET /traces/{traceId}` (spans with `depth`, `started_at` and `duration_ms` for the waterfall; events, actions, decisions, grants, approvals, usage) |
 | Costs / metrics | `GET /agents/{id}/metrics?range=` (`summary` plus `series.cost[]` / `series.latency[]`) |
-| Security | `GET /agents/{id}/incidents` |
+| Security | `GET /agents/{id}/incidents` and `PATCH /incidents/{id} {status, note}` (resolve or investigate; feeds "unresolved findings") |
 | Evidence | `GET /agents/{id}/evidence` (`integrity_ok` per item) and `GET /agents/{id}/evidence/export` (customer security / release manager) |
 | Integrations | `GET/PUT /integrations/keewano`, `POST /integrations/keewano/query` |
 | `/demo/agent` | `GET /demo/agent/state`, `POST /demo/agent/message {message, scenario}`, `POST /demo/agent/scenarios/{id}/reset` |

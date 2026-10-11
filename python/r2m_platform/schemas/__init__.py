@@ -193,6 +193,11 @@ class ReleaseEvaluateIn(Strict):
     artifact_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
+class IncidentUpdateIn(Strict):
+    status: Literal["open", "investigating", "resolved"]
+    note: str | None = Field(default=None, max_length=2000)
+
+
 class IntegrationToggleIn(Strict):
     organization_id: UUID
     enabled: bool

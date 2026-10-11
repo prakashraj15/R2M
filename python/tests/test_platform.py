@@ -280,3 +280,20 @@ async def test_database_invariants(app):
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await conn.execute("DELETE FROM evidence_items")
     assert (await security.post(f"/api/v1/approvals/{sub['submission_id']}/decision", json={"decision": "reject"})).json()["status"] == "rejected"
+
+
+async def test_incident_resolution_is_scoped_and_audited(app):
+    world = SimulationWorld(app.state.pool, MERIDIAN, M_INST)
+    refused = await anyio.to_thread.run_sync(world.apply_action, "rollback_deployment", {"replicas": 9}, None)
+    incident = refused["incident_id"]
+    ops, northwind = await login(app, "ops@meridian.demo"), await login(app, "security@northwind.demo")
+    release = await login(app, "release@atlas.demo")
+    overview = f"/api/v1/organizations/{MERIDIAN}/overview"
+    assert (await ops.get(overview)).json()["metrics"]["unresolved_high_severity_findings"] == 1
+    assert (await northwind.patch(f"/api/v1/incidents/{incident}", json={"status": "resolved"})).status_code == 404
+    assert (await release.patch(f"/api/v1/incidents/{incident}", json={"status": "resolved"})).status_code == 403
+    r = await ops.patch(f"/api/v1/incidents/{incident}", json={"status": "resolved", "note": "bypass build retired"})
+    assert r.json()["status"] == "resolved"
+    assert (await ops.get(overview)).json()["metrics"]["unresolved_high_severity_findings"] == 0
+    evidence = (await ops.get(f"/api/v1/agents/{AGENT}/evidence")).json()["items"]
+    assert any(e["evidence_type"] == "incident_status_changed" for e in evidence)

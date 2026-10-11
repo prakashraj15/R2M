@@ -12,10 +12,10 @@ from .errors import forbidden, not_found
 SESSION_COOKIE = "r2m_session"
 
 PERMISSIONS: dict[str, set[str]] = {
-    "vendor_developer": {"policy.submit", "integration.query", "demo.use"},
+    "vendor_developer": {"policy.submit", "incident.manage", "integration.query", "demo.use"},
     "vendor_release_manager": {"release.evaluate", "release.deploy", "evidence.export", "demo.use"},
-    "customer_security": {"approval.decide", "evidence.export", "integration.query", "integration.configure", "demo.use"},
-    "customer_ops": {"demo.use"},
+    "customer_security": {"approval.decide", "incident.manage", "evidence.export", "integration.query", "integration.configure", "demo.use"},
+    "customer_ops": {"incident.manage", "demo.use"},
     "org_admin": {"integration.configure"},
 }
 

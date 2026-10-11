@@ -67,6 +67,7 @@ Permissions by role: `GET /me` returns them per org. The source of truth is `PER
 | GET | `/traces/{traceId}` | `execution`, `spans[]` (with `depth` for the waterfall), `events[]`, `actions[]`, `decisions[]`, `grants[]` (never the token), `approvals[]`, `usage[]`, `insights[]`, `redacted_for_customer` |
 | GET | `/agents/{id}/metrics?range` | `summary` (same shape as overview metrics), `series{cost[], latency[]}` by hour/day |
 | GET | `/agents/{id}/incidents` | open/resolved findings with `trace_id` |
+| PATCH | `/incidents/{id}` | `{status: open\|investigating\|resolved, note?}` (customer_security, customer_ops, vendor_developer); evidence + audit recorded |
 | GET | `/agents/{id}/evidence` | items with `sha256` and recomputed `integrity_ok`, plus `caveat` |
 | GET | `/agents/{id}/evidence/export` | bundle with `manifest_sha256` (customer_security / vendor_release_manager); audited |
 | GET/PUT | `/integrations/keewano` | status (`platform_enabled`, `adapter_installed`, per-org enabled/backlog/dead) / `{organization_id, enabled}` (customer_security) |
