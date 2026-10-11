@@ -250,6 +250,14 @@ async def test_release_gate_blocks_failing_build(app):
         assert (await s.post(f"/api/v1/agents/{AGENT}/evaluations", json=run("faulty-1.0", "f", "failed"))).json()["status"] == "failed"
         assert (await s.post(f"/api/v1/agents/{AGENT}/evaluations", json=run("safe-1.0", "5", "passed"))).json()["status"] == "passed"
     body = {"installation_id": str(M_INST)}
+    no_policy = (await release.post(f"/api/v1/agents/{AGENT}/releases/evaluate",
+                                    json={**body, "build_version": "safe-1.0", "artifact_digest": digest("5")})).json()
+    assert no_policy["status"] == "blocked" and no_policy["details"]["no_policies_registered"]  # never vacuously approved
+    dev, security = await login(app, "dev@atlas.demo"), await login(app, "security@meridian.demo")
+    async with sdk_client(app) as s:
+        rev = (await s.post(f"/api/v1/agents/{AGENT}/policies/register", json={"policies": [DEPLOY_001]})).json()["policies"][0]
+    sub = (await dev.post(f"/api/v1/agents/{AGENT}/policies/{rev['revision_id']}/submit", json=body)).json()
+    await security.post(f"/api/v1/approvals/{sub['submission_id']}/decision", json={"decision": "approve"})
     faulty = (await release.post(f"/api/v1/agents/{AGENT}/releases/evaluate",
                                  json={**body, "build_version": "faulty-1.0", "artifact_digest": digest("f")})).json()
     assert faulty["status"] == "blocked" and not faulty["checks"]["build_evals_passed"]
@@ -379,3 +387,11 @@ async def test_csrf_header_and_rate_limits(app):
     assert hits[:2] == [0, 0] and hits[2] > 0
     now[0] = 61.0
     assert limiter.hit("k", 2) == 0  # next window
+
+
+async def test_env_comment_values_fail_fast(monkeypatch):
+    """docker compose keeps `KEY=   # note` as the value "# note"; that must stop startup, not sign grants."""
+    from r2m_platform.config import ConfigError, load_settings
+    monkeypatch.setenv("R2M_GRANT_SIGNING_KEY", "# optional; leave empty")
+    with pytest.raises(ConfigError, match="R2M_GRANT_SIGNING_KEY"):
+        load_settings()

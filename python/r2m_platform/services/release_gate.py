@@ -73,12 +73,14 @@ async def compute_gate(conn, installation: dict, build: dict, artifact_digest: s
         installation["vendor_org_id"], installation["customer_org_id"])
     checks = {
         "build_evals_passed": build_evals_passed,
-        "required_policies_approved": not unapproved,
+        # Fail closed: an agent with no registered policies has nothing a customer has approved.
+        "required_policies_approved": bool(newest) and not unapproved,
         "artifact_hash_matches": build["artifact_digest"] == artifact_digest,
         "tenant_access_valid": tenant_ok,
     }
     return {"eligible": all(checks.values()), "checks": checks,
             "details": {"missing_suites": missing, "failing_suites": failing, "unapproved_policies": unapproved,
+                        "no_policies_registered": not newest,
                         "suites": [{"suite_key": k, "status": r["status"], "summary": r["summary"]} for k, r in latest.items()]}}
 
 

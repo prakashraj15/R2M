@@ -1,71 +1,34 @@
 """Agent registry, deployments and topology for scoped installations."""
 from uuid import UUID
 
+import asyncpg
+
 from ..errors import ApiError, conflict
 from . import metrics_rollup
-from .evidence_builder import audit
 
 
 async def register_from_sdk(conn, body, principal) -> dict:
-    """SDK_CONTRACT §1. Idempotent upserts. A newly seen build gets a *proposed* deployment: only the release
-    gate (evaluate + deploy) can make it deployed, so registering code never bypasses evaluation or approval."""
+    """SDK_CONTRACT §1, in one database round trip (db function r2m_register_sdk_agent). A newly seen build gets a
+    *proposed* deployment: only the release gate (evaluate + deploy) can make it deployed, so registering code
+    never bypasses evaluation or approval."""
     if (body.vendor_org_id, body.customer_org_id) != (principal.vendor_org_id, principal.customer_org_id):
         raise ApiError(403, "tenant_scope_invalid", "SDK token is not scoped to this vendor/customer pair")
-    linked = await conn.fetchval(
-        """SELECT EXISTS(SELECT 1 FROM vendor_customer_links l JOIN organizations v ON v.id = l.vendor_org_id
-           JOIN organizations c ON c.id = l.customer_org_id WHERE l.vendor_org_id=$1 AND l.customer_org_id=$2
-           AND l.status='active' AND v.kind='vendor' AND c.kind='customer')""", body.vendor_org_id, body.customer_org_id)
-    if not linked:
-        raise ApiError(403, "tenant_scope_invalid", "vendor is not actively linked to this customer")
     b = body.build
-    async with conn.transaction():
-        # Creating an installation the caller can't see yet: pair validated above, so bypass RLS for this
-        # transaction only (set_config local=true reverts at commit/rollback).
-        await conn.execute("SELECT set_config('r2m.bypass', 'on', true)")
-        agent_id = await conn.fetchval(
-            """INSERT INTO agents(vendor_org_id, slug, name, description, sdk_version) VALUES ($1,$2,$3,$4,$5)
-               ON CONFLICT (vendor_org_id, slug) DO UPDATE SET name=EXCLUDED.name,
-               description=coalesce(EXCLUDED.description, agents.description), sdk_version=EXCLUDED.sdk_version
-               RETURNING id""", body.vendor_org_id, body.slug, body.name, body.description, body.sdk_version)
-        await conn.execute(
-            """INSERT INTO agent_installations(agent_id, customer_org_id, environment, status) VALUES ($1,$2,$3,'active')
-               ON CONFLICT (agent_id, customer_org_id, environment) DO NOTHING""", agent_id, body.customer_org_id, body.environment)
-        inst_id = await conn.fetchval(
-            "SELECT id FROM agent_installations WHERE agent_id=$1 AND customer_org_id=$2 AND environment=$3",
-            agent_id, body.customer_org_id, body.environment)
-        await conn.execute(
-            """INSERT INTO builds(agent_id, version, source_digest, artifact_digest) VALUES ($1,$2,$3,$4)
-               ON CONFLICT (agent_id, artifact_digest) DO NOTHING""", agent_id, b.version, b.source_digest, b.artifact_digest)
-        build = await conn.fetchrow("SELECT id, version FROM builds WHERE agent_id=$1 AND artifact_digest=$2", agent_id, b.artifact_digest)
-        if build["version"] != b.version:
+    try:
+        row = await conn.fetchrow(
+            "SELECT * FROM r2m_register_sdk_agent($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+            body.vendor_org_id, body.customer_org_id, body.environment, body.slug, body.name, body.description,
+            body.sdk_version, b.version, b.source_digest, b.artifact_digest,
+            [c.model_dump() for c in body.topology.components], [e.model_dump() for e in body.topology.edges])
+    except asyncpg.PostgresError as exc:
+        if exc.sqlstate == "R2M10":
             raise conflict("artifact digest already registered under another version")
-        dep = await conn.fetchrow(
-            """SELECT id, status FROM deployments WHERE installation_id=$1 AND build_id=$2
-               ORDER BY (status='deployed') DESC, created_at DESC LIMIT 1""", inst_id, build["id"])
-        if not dep:
-            dep = await conn.fetchrow(
-                "INSERT INTO deployments(installation_id, build_id, status) VALUES ($1,$2,'proposed') RETURNING id, status",
-                inst_id, build["id"])
-        for c in body.topology.components:
-            await conn.execute(
-                """INSERT INTO agent_components(installation_id, component_key, kind, label, metadata) VALUES ($1,$2,$3,$4,$5)
-                   ON CONFLICT (installation_id, component_key) DO UPDATE SET kind=EXCLUDED.kind, label=EXCLUDED.label,
-                   metadata=EXCLUDED.metadata""", inst_id, c.component_key, c.kind, c.label, c.metadata)
-        if body.topology.edges:
-            known = {r["component_key"]: r["id"] for r in await conn.fetch(
-                "SELECT component_key, id FROM agent_components WHERE installation_id=$1", inst_id)}
-            for e in body.topology.edges:
-                if e.source not in known or e.target not in known or e.source == e.target:
-                    raise ApiError(422, "validation_error", f"edge {e.source}->{e.target} references unknown components")
-                await conn.execute(
-                    """INSERT INTO component_edges(installation_id, source_component_id, target_component_id, edge_kind)
-                       SELECT $1,$2,$3,$4 WHERE NOT EXISTS (SELECT 1 FROM component_edges WHERE installation_id=$1
-                       AND source_component_id=$2 AND target_component_id=$3 AND edge_kind=$4)""",
-                    inst_id, known[e.source], known[e.target], e.edge_kind)
-        await audit(conn, None, body.vendor_org_id, "sdk.agent.register", "deployment", dep["id"], None,
-                    {"slug": body.slug, "build_version": b.version, "artifact_digest": b.artifact_digest,
-                     "environment": body.environment, "deployment_status": dep["status"]})
-    return {"agent_id": agent_id, "installation_id": inst_id, "deployment_id": dep["id"], "deployment_status": dep["status"]}
+        if exc.sqlstate == "R2M11":
+            raise ApiError(422, "validation_error", "topology edges reference unknown components")
+        raise
+    if not row:
+        raise ApiError(403, "tenant_scope_invalid", "vendor is not actively linked to this customer")
+    return dict(row)
 
 
 async def list_agents(conn, installations: list[dict]) -> list[dict]:

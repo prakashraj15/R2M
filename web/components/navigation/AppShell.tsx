@@ -10,7 +10,7 @@ import { DemoGuide } from "@/components/demo/DemoGuide";
 import { BrandMark } from "@/components/brand/BrandMark";
 export function AppShell({ children }: { children: ReactNode }) {
   const path = usePathname();
-  if (path === "/session") return <>{children}</>;
+  if (path === "/session" || path === "/live") return <>{children}</>;
   const demo = path.startsWith("/demo");
   return (
     <div className={demo ? "demo-shell" : "app-shell"}>
@@ -34,6 +34,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           )}
           <div className="top-actions">
+            <Link href="/live" className="button button-primary">
+              Live dashboard
+            </Link>
             <Link href="/session" className="text-link">
               Backend session
             </Link>

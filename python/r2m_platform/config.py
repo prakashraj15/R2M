@@ -38,7 +38,16 @@ def _required(name: str) -> str:
     return value
 
 
+def _no_comment_values() -> None:
+    """docker compose's env_file keeps `KEY=   # note` as the literal value "# note" (a shell would read it as empty).
+    Fail fast instead of, e.g., signing grants with a comment."""
+    for name, value in os.environ.items():
+        if name.startswith(("R2M_", "SDK_", "SESSION_", "DATABASE_", "KEEWANO_", "APP_")) and value.lstrip().startswith("#"):
+            raise ConfigError(f"{name} looks like a comment; put comments on their own line in the env file")
+
+
 def load_settings() -> Settings:
+    _no_comment_values()
     s = Settings(
         app_env=_required("APP_ENV"),
         database_url=_required("DATABASE_URL"),

@@ -37,7 +37,8 @@ POLICIES = ("DEPLOY-001", "CAPACITY-001", "DATA-001")
 
 
 def session(base: str, email: str) -> httpx.Client:
-    c = httpx.Client(base_url=base.rstrip("/") + "/api/v1", timeout=180, params={"installation_id": M_INST})
+    c = httpx.Client(base_url=base.rstrip("/") + "/api/v1", timeout=180, params={"installation_id": M_INST},
+                     headers={"x-r2m-csrf": "1"})  # backend CSRF guard on cookie-authenticated writes
     c.post("/demo/session", json={"email": email}).raise_for_status()
     return c
 

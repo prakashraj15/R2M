@@ -21,22 +21,25 @@ def adapter():
         return None
 
 
-async def enqueue(conn, customer_org_id, event_row: dict) -> None:
-    """Call inside the ingest transaction so the outbox row commits atomically with the event."""
+def mirroring_enabled() -> bool:
+    return adapter() is not None and get_settings().keewano_enabled
+
+
+async def enqueue_many(conn, customer_org_id, event_rows: list[dict]) -> None:
+    """Call inside the ingest transaction so outbox rows commit atomically with their events (2 round trips)."""
     mod = adapter()
-    if mod is None or not get_settings().keewano_enabled:
-        return
     integration_id = await conn.fetchval(
         "SELECT id FROM integration_configs WHERE organization_id=$1 AND provider='keewano' AND enabled",
         customer_org_id)
-    if not integration_id:
+    if not integration_id or mod is None:
         return
-    payload = mod.map_event(event_row)
-    if payload is not None:
+    mapped = [(row["event_id"], payload) for row in event_rows if (payload := mod.map_event(row)) is not None]
+    if mapped:
         await conn.execute(
-            """INSERT INTO integration_outbox(integration_id, source_event_id, payload) VALUES ($1,$2,$3)
+            """INSERT INTO integration_outbox(integration_id, source_event_id, payload)
+               SELECT $1, e, p FROM unnest($2::uuid[], $3::jsonb[]) AS t(e, p)
                ON CONFLICT (integration_id, source_event_id) DO NOTHING""",
-            integration_id, event_row["event_id"], payload)
+            integration_id, [m[0] for m in mapped], [m[1] for m in mapped])
 
 
 async def drain_once(pool, batch_size: int = 50) -> int:

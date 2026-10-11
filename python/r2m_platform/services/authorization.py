@@ -12,14 +12,14 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+import asyncpg
+
 from ..errors import ApiError, conflict, not_found
 from .evidence_builder import audit, record_evidence
-from .policy_registry import active_revisions
-from .trace_ingest import ensure_execution, sanitize
+from .trace_ingest import sanitize
 
 GRANT_FIELDS = ("grant_id", "action_id", "decision_id", "customer_org_id", "deployment_id", "policy_revision_ids",
                 "tool", "arguments_hash", "execution_id", "expires_at", "nonce")
-STRICTNESS = {"ALLOW": 0, "REQUIRE_APPROVAL": 1, "DENY": 2}
 
 
 def _sha256(text: str) -> str:
@@ -34,143 +34,46 @@ def sign_grant(grant: dict, key: str) -> str:
 
 
 async def authorize(conn, req, settings, principal) -> dict:
-    dep = await conn.fetchrow(
-        """SELECT d.id, d.status, d.installation_id, i.customer_org_id, i.agent_id, i.environment
-           FROM deployments d JOIN agent_installations i ON i.id = d.installation_id WHERE d.id=$1""", req.deployment_id)
-    if (not dep or req.customer_org_id != principal.customer_org_id or dep["installation_id"] != req.installation_id or dep["agent_id"] != req.agent_id
-            or dep["customer_org_id"] != req.customer_org_id or dep["environment"] != req.environment):
-        # Nothing can be persisted against an inconsistent scope.
-        return _response("DENY", ["TENANT_SCOPE_INVALID"], None, None, [], None, None)
-
-    async with conn.transaction():
-        if not await ensure_execution(conn, req.execution_id, dep["id"], dep["customer_org_id"], req.trace_id,
-                                      datetime.now(timezone.utc)):
+    """One database round trip for the decision (db function r2m_authorize, migration 0005), then grant signing
+    and evidence here. Evidence is written right after the decision commits; the decision, action and policy
+    decision rows are the authoritative record."""
+    nonce = secrets.token_hex(32)
+    expires = datetime.now(timezone.utc) + timedelta(seconds=settings.grant_ttl_seconds)
+    payload = {**req.model_dump(mode="json"), "arguments": sanitize(req.arguments or {})}
+    try:
+        out = await conn.fetchval("SELECT r2m_authorize($1, $2, $3, $4, $5)", principal.customer_org_id, payload,
+                                  _sha256(nonce), expires, settings.runtime_approval_ttl_seconds)
+    except asyncpg.PostgresError as exc:
+        if exc.sqlstate == "R2M20":
             raise conflict("execution is bound to a different deployment or trace")
-        if req.span_id:
-            await conn.execute(
-                """INSERT INTO spans(id, execution_id, kind, name, status, started_at)
-                   VALUES ($1,$2,'unknown','(pending)','placeholder',now()) ON CONFLICT (id) DO NOTHING""",
-                req.span_id, req.execution_id)
+        raise
+    if "action_id" not in out:  # tenant scope / action binding: nothing to bind a grant or evidence to
+        return _response(out["decision"], out["reason_codes"], None, None, [], None, None)
 
-        action = None
-        if req.action_id:
-            action = await conn.fetchrow(
-                "SELECT id, tool_key, arguments_hash, execution_id FROM tool_actions WHERE id=$1 FOR UPDATE", req.action_id)
-            if (not action or action["tool_key"] != req.tool or action["arguments_hash"] != req.arguments_hash
-                    or action["execution_id"] != req.execution_id):
-                return _response("DENY", ["ACTION_BINDING_MISMATCH"], None, None, [], None, None)
-        if not action:
-            action = await conn.fetchrow(
-                """INSERT INTO tool_actions(execution_id, span_id, tool_key, arguments_hash, arguments)
-                   VALUES ($1,$2,$3,$4,$5) RETURNING id""",
-                req.execution_id, req.span_id, req.tool, req.arguments_hash, sanitize(req.arguments or {}))
-
-        decision, reasons, revisions, approval = await _evaluate(conn, req, dep, action["id"], settings)
-        action_id = action["id"]
-
-        await conn.execute(
-            # Later decisions (e.g. a replayed resume) are recorded in policy_decisions but never rewrite an
-            # action that already executed.
-            """UPDATE tool_actions SET outcome=$2, authorized_at = CASE WHEN $3 THEN now() ELSE authorized_at END
-               WHERE id=$1 AND executed_at IS NULL""", action_id,
-            {"ALLOW": "authorized", "DENY": "denied", "REQUIRE_APPROVAL": "pending_approval"}[decision], decision == "ALLOW")
-        decision_ids = []
-        for rev in revisions or [None]:
-            decision_ids.append(await conn.fetchval(
-                """INSERT INTO policy_decisions(execution_id, action_id, revision_id, decision, reason_code, details)
-                   VALUES ($1,$2,$3,$4,$5,$6) RETURNING id""",
-                req.execution_id, action_id, rev["id"] if rev else None, decision.lower(), ",".join(reasons)[:500],
-                {"tool": req.tool, "risk": req.risk, "arguments_hash": req.arguments_hash,
-                 "local_decision": req.local_decision, "local_results": [p.model_dump() for p in req.policies],
-                 "approval_id": approval["id"] if approval else None,
-                 "policy": {"key": rev["policy_key"], "version": rev["version"], "hash": rev["artifact_hash"]} if rev else None}))
-
-        revision_ids = [r["id"] for r in revisions]
-        grant = None
-        if decision == "ALLOW":
-            if approval:  # one grant per approval
-                await conn.execute("UPDATE runtime_approvals SET status='consumed' WHERE id=$1", approval["id"])
-            nonce = secrets.token_hex(32)
-            expires = datetime.now(timezone.utc) + timedelta(seconds=settings.grant_ttl_seconds)
-            grant_id = await conn.fetchval(
-                """INSERT INTO action_grants(action_id, customer_org_id, deployment_id, execution_id, policy_revision_ids,
-                   tool_key, arguments_hash, nonce_hash, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id""",
-                action_id, dep["customer_org_id"], dep["id"], req.execution_id, revision_ids, req.tool,
-                req.arguments_hash, _sha256(nonce), expires)
-            grant = {"grant_id": str(grant_id), "action_id": str(action_id), "decision_id": str(decision_ids[0]),
-                     "customer_org_id": str(dep["customer_org_id"]), "deployment_id": str(dep["id"]),
-                     "policy_revision_ids": [str(r) for r in revision_ids], "tool": req.tool,
-                     "arguments_hash": req.arguments_hash, "execution_id": str(req.execution_id),
-                     "expires_at": expires.isoformat(), "nonce": nonce}
-            # Unless a shared key is configured, sign with the caller's own token: exactly what the SDK
-            # verifies with by default (GrantVerifier(grant_key or token)).
-            grant["signature"] = sign_grant(grant, settings.grant_signing_key or principal.token)
-
-        await record_evidence(conn, dep["installation_id"], "action_decision",
-                              {"action_id": action_id, "decision": decision, "reason_codes": reasons, "tool": req.tool,
-                               "arguments_hash": req.arguments_hash, "decision_ids": decision_ids,
-                               "approval_id": approval["id"] if approval else None,
-                               "grant_id": grant["grant_id"] if grant else None},
-                              execution_id=req.execution_id, policy_revision_id=revision_ids[0] if revision_ids else None)
-    return _response(decision, reasons, decision_ids[0], action_id, revision_ids,
-                     approval["id"] if approval else None, approval["status"] if approval else None, grant)
+    decision, reasons, decision_ids = out["decision"], out["reason_codes"], out["decision_ids"]
+    revision_ids = out["policy_revision_ids"]
+    grant = None
+    if decision == "ALLOW":
+        grant = {"grant_id": out["grant_id"], "action_id": out["action_id"], "decision_id": decision_ids[0],
+                 "customer_org_id": out["customer_org_id"], "deployment_id": out["deployment_id"],
+                 "policy_revision_ids": revision_ids, "tool": req.tool, "arguments_hash": req.arguments_hash,
+                 "execution_id": str(req.execution_id), "expires_at": expires.isoformat(), "nonce": nonce}
+        # Unless a shared key is configured, sign with the caller's own token: exactly what the SDK
+        # verifies with by default (GrantVerifier(grant_key or token)).
+        grant["signature"] = sign_grant(grant, settings.grant_signing_key or principal.token)
+    await record_evidence(conn, UUID(out["installation_id"]), "action_decision",
+                          {"action_id": out["action_id"], "decision": decision.lower(), "reason_codes": reasons,
+                           "tool": req.tool, "arguments_hash": req.arguments_hash, "decision_ids": decision_ids,
+                           "approval_id": out["approval_id"], "grant_id": out["grant_id"]},
+                          execution_id=req.execution_id, policy_revision_id=UUID(revision_ids[0]) if revision_ids else None)
+    return _response(decision, reasons, decision_ids[0], out["action_id"], revision_ids, out["approval_id"],
+                     out["approval_status"], grant)
 
 
 def _response(decision, reasons, decision_id, action_id, revision_ids, approval_id, approval_status, grant=None) -> dict:
     return {"decision": decision, "reason_codes": reasons, "decision_id": decision_id, "action_id": action_id,
             "policy_revision_ids": revision_ids, "approval_id": approval_id, "approval_status": approval_status,
             "grant": grant}
-
-
-async def _evaluate(conn, req, dep, action_id: UUID, settings):
-    """Returns (decision, reason_codes, cited_revisions, approval_row|None). Order matters: fail closed first."""
-    if dep["status"] != "deployed":
-        return "DENY", ["DEPLOYMENT_NOT_ACTIVE"], [], None
-
-    active = {r["policy_key"]: r for r in await active_revisions(conn, dep["installation_id"])}
-    cited, unapproved = [], []
-    for p in req.policies:
-        rev = active.get(p.policy_id)
-        if rev and rev["artifact_hash"] == p.artifact_hash and rev["version"] == p.version:
-            cited.append(rev)
-        else:
-            unapproved.append(f"POLICY_NOT_APPROVED:{p.policy_id}")
-    if unapproved:
-        return "DENY", unapproved, cited, None
-    # Every policy ever registered for this agent that governs this tool must be cited, so a build that
-    # drops the decorator's policy binding cannot authorize the tool on its own.
-    governing = await conn.fetch(
-        "SELECT DISTINCT policy_key FROM policy_revisions WHERE agent_id=$1 AND definition_metadata->'tools' ? $2",
-        dep["agent_id"], req.tool)
-    missing = sorted({g["policy_key"] for g in governing} - {c["policy_key"] for c in cited})
-    if missing:
-        return "DENY", [f"GOVERNING_POLICY_NOT_CITED:{k}" for k in missing], cited, None
-
-    # Strictest of the overall local verdict and each per-policy verdict; the server never relaxes it.
-    local = max([req.local_decision, *(p.decision for p in req.policies)], key=STRICTNESS.get)
-    local_codes = [p.reason_code for p in req.policies if p.decision == local and p.reason_code]
-    if local == "DENY":
-        return "DENY", local_codes or ["LOCAL_POLICY_DENY"], cited, None
-    if local == "ALLOW":
-        return "ALLOW", ["ALLOWED"], cited, None
-
-    approval = await conn.fetchrow(
-        "SELECT id, status, expires_at FROM runtime_approvals WHERE action_id=$1 ORDER BY requested_at DESC LIMIT 1 FOR UPDATE",
-        action_id)
-    if not approval:
-        approval = await conn.fetchrow(
-            """INSERT INTO runtime_approvals(action_id, status, expires_at)
-               VALUES ($1,'pending', now() + make_interval(secs => $2)) RETURNING id, status, expires_at""",
-            action_id, settings.runtime_approval_ttl_seconds)
-    status = approval["status"]
-    if status in ("pending", "approved") and approval["expires_at"] <= datetime.now(timezone.utc):
-        await conn.execute("UPDATE runtime_approvals SET status='expired' WHERE id=$1", approval["id"])
-        status = "expired"
-    if status == "pending":
-        return "REQUIRE_APPROVAL", local_codes or ["HUMAN_APPROVAL_REQUIRED"], cited, approval
-    if status != "approved":
-        return "DENY", [f"APPROVAL_{status.upper()}"], cited, {**dict(approval), "status": status}
-    return "ALLOW", ["HUMAN_APPROVED"], cited, approval
 
 
 async def record_result(conn, action_id: UUID, body, principal) -> dict:

@@ -42,14 +42,6 @@ async def register(conn, agent_id: UUID, policies, installation_id: UUID | None)
     return out
 
 
-async def active_revisions(conn, installation_id: UUID) -> list[dict]:
-    rows = await conn.fetch(
-        f"""SELECT {REVISION_COLUMNS} FROM policy_activations a JOIN policy_revisions r ON r.id = a.revision_id
-            WHERE a.installation_id=$1 AND a.active AND (a.expires_at IS NULL OR a.expires_at > now())""",
-        installation_id)
-    return [dict(r) for r in rows]
-
-
 async def submit(conn, actor, revision_id: UUID, installation: dict, note: str | None, request_id: str | None) -> dict:
     actor.require("policy.submit", installation["vendor_org_id"])
     rev = await conn.fetchrow(f"SELECT {REVISION_COLUMNS} FROM policy_revisions r WHERE r.id=$1 AND r.agent_id=$2",
