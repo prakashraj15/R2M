@@ -9,6 +9,7 @@ of the call made under POLICY_GATE.
 """
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Iterator
@@ -49,8 +50,9 @@ class Outcome:
 class Workflow:
     def __init__(self, client: "R2MClient", tools: Toolbox, llm: SimulatedLLM, memory: "ConversationMemory",
                  insights: Any, *, scenario: str, build: "Build", deployment_status: str,
-                 can_fault_inject: bool, fault_tools: Toolbox | None = None):
+                 can_fault_inject: bool, fault_tools: Toolbox | None = None, world: Any = None):
         self.client = client
+        self.world = world
         self.tools = tools
         self.fault_tools = fault_tools
         self.llm = llm
@@ -87,7 +89,7 @@ class Workflow:
     # ---- entry ---------------------------------------------------------
     def handle(self, message: str) -> dict[str, Any]:
         intent = parse_intent(message, self.scenario)
-        pending = self.memory.peek()
+        pending = self.memory.peek(self._fingerprint())
         if intent.kind == "resume" and pending:
             return self._resume(message, pending)
         return self._fresh(message, intent, pending)
@@ -232,7 +234,8 @@ class Workflow:
             self.out.update(decision="REQUIRE_APPROVAL", reasons=list(exc.reason_codes), action_id=exc.action_id,
                             approval_id=exc.approval_id)
             with self.step("WAIT_APPROVAL", action_id=exc.action_id, approval_id=exc.approval_id):
-                self.memory.save_pending({"action_id": exc.action_id, "approval_id": exc.approval_id,
+                self.memory.save_pending({"world_fingerprint": self._fingerprint(),
+                                          "action_id": exc.action_id, "approval_id": exc.approval_id,
                                           "execution_id": run.execution_id, "trace_id": run.trace_id,
                                           "tool": proposal.tool, "proposal": asdict(proposal),
                                           "incident_category": self.incident_category})
@@ -265,6 +268,15 @@ class Workflow:
                            f"incident {exc.result.get('incident_id')}. This is why the faulty build fails mandatory "
                            f"regression and cannot be released.",
                            {"decision": "DENY", "reasons": ["INFRASTRUCTURE_REFUSED_NO_GRANT"], "changed": False})
+        except Exception as exc:  # a failing tool must never crash the turn; the SDK already reported it
+            if resume_id:
+                self.memory.clear_pending()
+            self.out.update(decision="FAILED", reasons=[f"TOOL_ERROR:{type(exc).__name__}"])
+            with self.step("DENIED", reasons=[f"TOOL_ERROR:{type(exc).__name__}"], tool=proposal.tool):
+                pass
+            return Outcome("failed", f"{proposal.tool} failed ({type(exc).__name__}: {str(exc)[:160]}). Nothing was "
+                                     f"changed.", {"decision": "FAILED", "error": type(exc).__name__,
+                                                   "detail": str(exc)[:160], "changed": False})
 
         if resume_id:
             self.memory.clear_pending()
@@ -294,6 +306,17 @@ class Workflow:
                           resume_id: str | None = None) -> dict[str, Any]:
         outcome = self._execute(run, tools, proposal, svc_before, resume_id=resume_id)
         return self.finish(" ".join([outcome.reply, *notes]))
+
+    def _fingerprint(self) -> str | None:
+        """Current synthetic service state, used to discard memory recorded under a different world."""
+        if self.world is None:
+            return None
+        try:
+            svc = self.world.get_service() or {}
+        except Exception:
+            return None
+        # last_transition_at changes on every reset and every applied action, even back to the same values.
+        return json.dumps(svc, sort_keys=True, default=str)
 
     def _deny_hint(self, codes: tuple[str, ...]) -> str:
         if "DEPLOYMENT_NOT_ACTIVE" in codes:

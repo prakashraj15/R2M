@@ -4,6 +4,7 @@ Backend owns durability and retry. The AI-owned adapter (services/keewano_adapte
 sanitization: `map_event(event: dict) -> dict | None` and `async send_events(payloads: list[dict]) -> None`.
 """
 import asyncio
+import importlib
 import logging
 
 from ..config import get_settings
@@ -14,9 +15,9 @@ MAX_ATTEMPTS = 8
 
 
 def adapter():
+    # import_module honours sys.modules first (tests swap in a fake adapter there).
     try:
-        from ..services import keewano_adapter
-        return keewano_adapter
+        return importlib.import_module("r2m_platform.services.keewano_adapter")
     except ImportError:
         return None
 

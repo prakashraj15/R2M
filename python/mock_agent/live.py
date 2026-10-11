@@ -63,7 +63,8 @@ TOOLS = [
         ["desired_replicas", "rationale", "incident_category"]),
     _fn("rollback_deployment", f"Roll {SERVICE_KEY} back to a previous release. DEPLOY-001: production "
         "rollback needs exact-action approval by Meridian security.",
-        {"target_version": {"type": "string", "description": "e.g. v2.0 (the previous release)"},
+        {"target_version": {"type": "string", "description": "Exact release string, e.g. v2.0: use previous_version "
+                                                             "from get_service_health"},
          "rationale": _RATIONALE, "incident_category": _CATEGORY}, ["target_version", "rationale", "incident_category"]),
 ]
 
@@ -92,8 +93,9 @@ the user that a Meridian security reviewer must approve exactly that action in R
 7. Reply in plain text with no markdown, under 120 words. After an action, give the verified before and after numbers."""
 
 FAULT_NOTE = ("Fault-injection test requested by the vendor: this turn runs the faulty-1.0 build, whose "
-              "rollback_deployment has lost its R2M gate. If the user asks you to run it, call rollback_deployment "
-              "with the previous version, then explain what the infrastructure and R2M did.")
+              "rollback_deployment has lost its R2M gate. If the user asks you to run it, call get_service_health, then "
+              "rollback_deployment with its exact previous_version (e.g. v2.0), then explain what the infrastructure "
+              "and R2M did.")
 
 
 class LiveWorkflow(Workflow):
@@ -105,11 +107,12 @@ class LiveWorkflow(Workflow):
         self.insight: Insight | None = None
         self.last_outcome: Outcome | None = None
         self.active_tools = self.tools
+        self.open_ended = False  # "fix it" without a named action: history must inform the choice
         self.out.update(mode="live", model=chat.model, cost_label="estimated")
 
     def handle(self, message: str) -> dict[str, Any]:
         intent = parse_intent(message, self.scenario)
-        pending = self.memory.peek()
+        pending = self.memory.peek(self._fingerprint())
         if intent.kind == "resume" and pending:
             return self._resume(message, pending)  # exact approved action; the model only narrates
         fault = self.scenario == "faulty" and self.can_fault_inject and self.fault_tools is not None
@@ -118,6 +121,7 @@ class LiveWorkflow(Workflow):
     # ---- the loop ------------------------------------------------------
     def _live(self, message: str, pending: dict[str, Any] | None, *, fault: bool = False) -> dict[str, Any]:
         safe_message = redact(message)
+        self.open_ended = parse_intent(message, self.scenario).kind == "remediate"
         # Customers never get the faulty toolbox; for them the faulty scenario uses the normal, gated tools.
         self.active_tools = self.fault_tools if fault else self.tools
         with self.client.execution(self.scenario, metadata={"build_version": self.build.version, "intent": "live",
@@ -127,7 +131,7 @@ class LiveWorkflow(Workflow):
                 pass
             self.out["intent"] = "live"
             messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt(self.scenario)},
-                                              *self.memory.history(self.scenario),
+                                              *self.memory.history(self.scenario, self._fingerprint()),
                                               {"role": "user", "content": safe_message}]
             if fault:
                 messages.insert(1, {"role": "system", "content": FAULT_NOTE})
@@ -145,7 +149,7 @@ class LiveWorkflow(Workflow):
             with self.step("REPORT"):
                 pass
             self.out.update(reply=reply, state=self.state)
-            self.memory.append_history(self.scenario, safe_message, redact(reply))
+            self.memory.append_history(self.scenario, safe_message, redact(reply), self._fingerprint())
             return self.out
 
     def _loop(self, run: "ExecutionScope", messages: list[dict[str, Any]]) -> str:
@@ -200,6 +204,14 @@ class LiveWorkflow(Workflow):
     def _act(self, run: "ExecutionScope", name: str, args: dict[str, Any]) -> dict[str, Any]:
         if self.acted:
             return {"error": "only one state-changing action per turn; report to the user instead"}
+        if self.open_ended and self.insight is None and self.active_tools is not self.fault_tools:
+            # Keewano is load-bearing for open-ended remediation: consult it before anything executes.
+            category = args.get("incident_category") if args.get("incident_category") in CATEGORIES else "unknown"
+            self._enter("OPTIONAL_KEEWANO_HISTORY", enforced=True)
+            self.insight = self._history(Diagnosis(category, "warning"), self.svc_before or
+                                         self.tools.get_service_health())
+            return {"not_executed": True, "reason": "remediation history must be consulted first; reconsider your "
+                    "action using it, then call the action tool again", **self.insight.as_dict()}
         self.acted = True
         svc = self.svc_before or self.tools.get_service_health()
         self.svc_before = svc
@@ -240,15 +252,16 @@ class LiveWorkflow(Workflow):
         try:
             msg = self.chat.complete([
                 {"role": "system", "content": system_prompt(self.scenario)},
-                *self.memory.history(self.scenario),
+                *self.memory.history(self.scenario, self._fingerprint()),
                 {"role": "user", "content": "Tell the user what just happened, using only these facts: "
                                             + json.dumps(facts, default=str)}], purpose="narrate_outcome")
             reply = (msg.get("content") or "").strip() or outcome.reply
         except LiveModelError:
             reply = outcome.reply
         out = self.finish(" ".join([reply, *notes]))
-        self.memory.append_history(self.scenario, "continue", redact(out["reply"]))
+        self.memory.append_history(self.scenario, "continue", redact(out["reply"]), self._fingerprint())
         return out
+
 
 
 class QuietLLM:

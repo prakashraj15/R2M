@@ -10,7 +10,9 @@ Steps:
 5. The four scenarios run: healthy, degraded, approval with resume, and faulty (vendor).
 
 It changes demo state on that server (approvals, deployments, simulated service), so point it at a
-server whose demo data you are happy to reset. Requires SDK_INGEST_TOKEN to match the server.
+server whose demo data you are happy to reset. Evals are posted with a per-customer SDK token in
+SDK_INGEST_TOKEN: python scripts/sdk_token.py issue --vendor atlas-applied-ai --customer meridian-financial
+--label run-evals
 """
 from __future__ import annotations
 
@@ -38,7 +40,7 @@ POLICIES = ("DEPLOY-001", "CAPACITY-001", "DATA-001")
 
 def session(base: str, email: str) -> httpx.Client:
     c = httpx.Client(base_url=base.rstrip("/") + "/api/v1", timeout=180, params={"installation_id": M_INST},
-                     headers={"x-r2m-csrf": "1"})  # backend CSRF guard on cookie-authenticated writes
+                     headers={"X-R2M-CSRF": "1"})
     c.post("/demo/session", json={"email": email}).raise_for_status()
     return c
 

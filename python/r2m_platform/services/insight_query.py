@@ -45,7 +45,7 @@ class AgentInsights:
 
     async def _query(self, question: str) -> dict:
         async with self._pool.acquire() as conn:
-            # Worker-thread call: no request scope here, so pin RLS to exactly this installation and its customer.
+            # Row-level security: scope this connection to exactly this installation and its customer.
             await apply_scope(conn, Scope((self._inst["id"],), (self._inst["customer_org_id"],)))
             out = await run_insight_query(conn, self._inst, question, self._enabled)
         if isinstance(out.get("insight_id"), UUID):

@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 
-from ..auth import Actor, installation_in_scope, scoped_installations
+from ..auth import Actor, installation_in_scope
 from ..config import Settings
 from ..dependencies import actor, db, settings
 from ..errors import ApiError, not_found
@@ -23,10 +23,8 @@ async def status(a: Actor = Depends(actor), conn=Depends(db), cfg: Settings = De
                   (SELECT count(*) FROM integration_outbox x WHERE x.integration_id=c.id AND x.state='dead') AS dead
            FROM integration_configs c JOIN organizations o ON o.id = c.organization_id
            WHERE c.provider='keewano' AND c.organization_id = ANY($1::uuid[])""", a.org_ids)
-    scope = [i["id"] for i in await scoped_installations(conn, a)]
     last = await conn.fetchrow(
-        """SELECT status, created_at, sample_count FROM insight_queries
-           WHERE provider='keewano' AND installation_id = ANY($1::uuid[]) ORDER BY created_at DESC LIMIT 1""", scope)
+        "SELECT status, created_at, sample_count FROM insight_queries WHERE provider='keewano' ORDER BY created_at DESC LIMIT 1")
     return {"platform_enabled": cfg.keewano_enabled, "adapter_installed": adapter() is not None,
             "organizations": [dict(r) for r in rows], "last_query": dict(last) if last else None}
 

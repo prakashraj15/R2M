@@ -9,15 +9,16 @@ import sys
 import threading
 import time
 
+import asyncpg
 import httpx
 import pytest
 import uvicorn
 from conftest import CSRF, reset_db
-from test_sdk_e2e import _evals_token
 from seed_demo import uid
 
 from mock_agent import evals, memory
 from mock_agent.build import FAULTY_VERSION, SAFE_VERSION, build
+from r2m_platform.auth import issue_sdk_credential
 from r2m_platform.config import get_settings
 from r2m_platform.main import create_app
 
@@ -39,7 +40,8 @@ def live(monkeypatch, request):
     monkeypatch.setenv("R2M_INTERNAL_API_URL", f"http://127.0.0.1:{port}")
     sys.modules.pop("mock_agent.agent", None)  # the real agent, not a stub left by another test
     get_settings.cache_clear()
-    server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning",
+                                            proxy_headers=False))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     while not server.started:
@@ -49,6 +51,16 @@ def live(monkeypatch, request):
     thread.join(5)
     get_settings.cache_clear()
     memory.reset_all()
+
+
+async def _evals_token() -> str:
+    import os
+    conn = await asyncpg.connect(os.environ["TEST_DATABASE_URL"])
+    try:
+        return (await issue_sdk_credential(conn, os.environ["SDK_TOKEN_SECRET"], uid("org", "atlas"),
+                                           uid("org", "meridian"), "run-evals"))[1]
+    finally:
+        await conn.close()
 
 
 def login(base, email):

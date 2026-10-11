@@ -27,8 +27,9 @@ log = logging.getLogger("mock_agent")
 
 
 def make_client(context: dict[str, Any], **overrides: Any) -> R2MClient:
-    # The platform hands the in-process agent its own per-customer token; the env var is for out-of-process runs.
-    cfg = dict(token=context.get("sdk_token") or os.environ["SDK_INGEST_TOKEN"], agent_slug=AGENT_SLUG, vendor_org_id=context["vendor_org_id"],
+    # The platform issues a per-customer SDK token (vendor+customer scoped) in the context.
+    token = context.get("sdk_token") or os.environ.get("SDK_INGEST_TOKEN", "")
+    cfg = dict(token=token, agent_slug=AGENT_SLUG, vendor_org_id=context["vendor_org_id"],
                customer_org_id=context["customer_org_id"], environment=context["environment"],
                base_url=context["api_url"], background=False)
     cfg.update(overrides)
@@ -55,9 +56,10 @@ def run_turn(client: R2MClient, message: str, scenario: str, context: dict[str, 
     can_fault_inject = bool(roles & FAULT_INJECTION_ROLES)
     common = dict(scenario=scenario, build=b, deployment_status=reg.get("deployment_status", "unknown"),
                   can_fault_inject=can_fault_inject,
-                  fault_tools=make_tools(client, world, fault_injection=True) if can_fault_inject else None)
+                  fault_tools=make_tools(client, world, fault_injection=True) if can_fault_inject else None,
+                  world=world)
     tools = make_tools(client, world, fault_injection=b.fault_injection)
-    memory = ConversationMemory(client, context["customer_org_id"])
+    memory = ConversationMemory(client, context["customer_org_id"], (context.get("actor") or {}).get("email"))
 
     mode = llm_mode(context)
     if mode == "openai":
