@@ -4,12 +4,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 
-from ..auth import Actor, installation_in_scope
+from ..auth import Actor, installation_in_scope, scoped_installations
 from ..config import Settings
 from ..dependencies import actor, db, settings
 from ..errors import ApiError, not_found
 from ..schemas import IntegrationToggleIn, KeewanoQueryIn
 from ..services.evidence_builder import audit
+from ..services.trace_ingest import sanitize
 from ..workers.event_outbox import adapter
 
 router = APIRouter(tags=["integrations"])
@@ -23,8 +24,10 @@ async def status(a: Actor = Depends(actor), conn=Depends(db), cfg: Settings = De
                   (SELECT count(*) FROM integration_outbox x WHERE x.integration_id=c.id AND x.state='dead') AS dead
            FROM integration_configs c JOIN organizations o ON o.id = c.organization_id
            WHERE c.provider='keewano' AND c.organization_id = ANY($1::uuid[])""", a.org_ids)
+    scope = [i["id"] for i in await scoped_installations(conn, a)]
     last = await conn.fetchrow(
-        "SELECT status, created_at, sample_count FROM insight_queries WHERE provider='keewano' ORDER BY created_at DESC LIMIT 1")
+        """SELECT status, created_at, sample_count FROM insight_queries
+           WHERE provider='keewano' AND installation_id = ANY($1::uuid[]) ORDER BY created_at DESC LIMIT 1""", scope)
     return {"platform_enabled": cfg.keewano_enabled, "adapter_installed": adapter() is not None,
             "organizations": [dict(r) for r in rows], "last_query": dict(last) if last else None}
 
@@ -54,6 +57,7 @@ async def query(body: KeewanoQueryIn, a: Actor = Depends(actor), conn=Depends(db
         return {"status": "unavailable", "message": "intelligence unavailable: Keewano integration disabled or not installed"}
     try:
         result = await asyncio.wait_for(mod.query(body.question, {"installation_id": str(inst["id"])}), timeout=20)
+        result = sanitize(result if isinstance(result, dict) else {"value": str(result)})  # untrusted
         status_ = "ok"
     except Exception as exc:
         result, status_ = {"error_class": type(exc).__name__}, "failed"

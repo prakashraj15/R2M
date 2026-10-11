@@ -85,7 +85,7 @@ async def reset(scenario_id: str, request: Request, installation_id: UUID | None
     if scenario_id not in simulation.BASELINES:
         raise not_found("scenario")
     inst = await _demo_installation(conn, a, installation_id)
-    out = await simulation.reset(conn, inst["customer_org_id"], scenario_id)
+    out = await simulation.reset(conn, inst["customer_org_id"], scenario_id, inst["id"])
     await audit(conn, a.user_id, inst["customer_org_id"], "demo.scenario.reset", "installation", inst["id"],
                 request.state.request_id, {"scenario": scenario_id})
     return out

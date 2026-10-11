@@ -73,7 +73,7 @@ Permissions by role: `GET /me` returns them per org. The source of truth is `PER
 | GET/PUT | `/integrations/keewano` | status (`platform_enabled`, `adapter_installed`, per-org enabled/backlog/dead) / `{organization_id, enabled}` (customer_security) |
 | POST | `/integrations/keewano/query` | `{installation_id, question}` → `{status: ok\|failed\|unavailable, insight_id, result, trust: "untrusted advisory data"}` |
 | POST | `/demo/agent/message?installation_id` | `{message, scenario: healthy\|degraded\|approval\|faulty}` → the agent's dict, sanitized |
-| POST | `/demo/agent/scenarios/{id}/reset` | resets synthetic `payments-api` state and expires open runtime approvals (only when `APP_ENV=demo`) |
+| POST | `/demo/agent/scenarios/{id}/reset` | restores synthetic `payments-api`, expires open runtime approvals and resolves the installation's open incidents (only when `APP_ENV=demo`). Returns `{scenario, service, incidents_resolved}`; history is kept |
 | GET | `/demo/agent/state` | `services[]`, `scenarios`, `recent_actions[]` (with `authorized`), `approvals[]`, `last_execution` |
 
 **Overview/agent metric shape:** `deployed_agents`, `run_success{value,completed,finished,total,status}`, `unresolved_high_severity_findings`, `policy_enforcement_coverage{value,numerator,denominator,explanation}`, `cost{total_usd,by_source{observed,estimated,allocated,simulated},input_tokens,output_tokens,provenance_note}`, `p95_action_latency_ms`.

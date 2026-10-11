@@ -31,7 +31,9 @@ def _state(row) -> dict:
     return {k: row[k] for k in STATE_FIELDS}
 
 
-async def reset(conn, customer_org_id: UUID, scenario: str) -> dict:
+async def reset(conn, customer_org_id: UUID, scenario: str, installation_id: UUID) -> dict:
+    """Restore the synthetic service, expire open runtime approvals and close the previous run's incidents, so the
+    next demo starts clean. Traces, decisions, evidence and audit history are kept."""
     base = BASELINES[scenario]
     async with conn.transaction():
         await conn.execute(
@@ -49,7 +51,12 @@ async def reset(conn, customer_org_id: UUID, scenario: str) -> dict:
             """UPDATE runtime_approvals ra SET status='expired' FROM tool_actions a, executions e
                WHERE ra.action_id=a.id AND a.execution_id=e.id AND e.customer_org_id=$1 AND ra.status IN ('pending','approved')""",
             customer_org_id)
-    return {"scenario": scenario, "service": {"service_key": SERVICE_KEY, **base}}
+        closed = await conn.fetch(
+            """UPDATE incidents SET status='resolved', resolved_at=now()
+               WHERE installation_id=$1 AND status <> 'resolved' RETURNING id""", installation_id)
+        await record_evidence(conn, installation_id, "demo_reset",
+                              {"scenario": scenario, "service": base, "incidents_resolved": [r["id"] for r in closed]})
+    return {"scenario": scenario, "service": {"service_key": SERVICE_KEY, **base}, "incidents_resolved": len(closed)}
 
 
 async def services(conn, customer_org_id: UUID) -> list[dict]:
