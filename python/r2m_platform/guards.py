@@ -6,11 +6,10 @@ from .auth import SESSION_COOKIE
 
 UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 CSRF_HEADER = "x-r2m-csrf"
-LOOPBACK = {"127.0.0.1", "::1"}
 
 # (method, path) overrides, else bucket by caller type. Limits are per minute.
 ROUTE_LIMITS = {
-    ("POST", "/api/v1/demo/session"): ("login", 20),
+    ("POST", "/api/v1/demo/session"): ("login", 60),
     ("POST", "/api/v1/integrations/keewano/query"): ("keewano", 10),
     ("POST", "/api/v1/demo/agent/message"): ("agent", 30),
 }
@@ -26,10 +25,10 @@ def csrf_ok(method: str, headers) -> bool:
 
 
 def client_ip(request) -> str:
-    peer = request.client.host if request.client else "unknown"
-    forwarded = request.headers.get("x-forwarded-for", "")
-    # Only trust X-Forwarded-For from the in-container Next.js proxy.
-    return forwarded.split(",")[0].strip() if peer in LOOPBACK and forwarded else peer
+    """The TCP peer. X-Forwarded-For is deliberately ignored: Next.js rewrites pass the client's own value through
+    unchanged (verified), so it is attacker-controlled. Behind the proxy every browser shares one peer address, so
+    per-IP limits cap the proxy as a whole; per-session and per-token limits are the per-caller controls."""
+    return request.client.host if request.client else "unknown"
 
 
 class RateLimiter:

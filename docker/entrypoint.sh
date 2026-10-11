@@ -7,7 +7,9 @@ cd /app
 # Idempotent, advisory-locked. The API needs the r2m_app role and RLS policies from the migrations.
 python scripts/init_db.py || exit 1
 
-python -m uvicorn r2m_platform.main:app --host 127.0.0.1 --port 8000 --no-server-header &
+# --no-proxy-headers: uvicorn would otherwise trust X-Forwarded-For from localhost, and Next.js passes the
+# client's own (spoofable) value through, letting anyone pick their apparent IP and dodge per-IP limits.
+python -m uvicorn r2m_platform.main:app --host 127.0.0.1 --port 8000 --no-server-header --no-proxy-headers &
 API=$!
 HOSTNAME=0.0.0.0 PORT=3000 node /app/web/server.js &
 WEB=$!

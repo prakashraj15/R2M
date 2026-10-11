@@ -83,14 +83,16 @@ Permissions are checked against the **owning** org of the record: the vendor org
 
   | Scope | Limit per minute |
   |---|---|
-  | Login, per IP | 20 |
+  | Login, per IP | 60 |
   | Keewano query, per caller | 10 |
   | Demo agent message, per caller | 30 |
   | Browser, per session | 600 |
   | SDK, per token | 3000 |
   | Any caller, per IP | 3000 |
 
-  `X-Forwarded-For` is trusted only from the in-container proxy. The counters live in process memory, which is fine for this single-process API; a multi-replica deployment would need shared counters.
+  `X-Forwarded-For` is **never trusted**. Next.js rewrites pass the client's own value through unchanged (verified in the container), and uvicorn runs with `--no-proxy-headers` so it can't rewrite the client address either. Behind the proxy, every browser therefore shares one IP: per-IP limits cap the whole proxy, while per-session and per-token limits are the per-user controls.
+
+  The counters live in process memory and use fixed windows, so a burst of up to twice the limit is possible across a window boundary. That's fine for this single-process API; a multi-replica deployment would need shared counters.
 
 ## Known gaps (prototype)
 

@@ -39,7 +39,7 @@ def live(monkeypatch):
     monkeypatch.setenv("R2M_INTERNAL_API_URL", f"http://127.0.0.1:{port}")
     monkeypatch.setitem(sys.modules, "mock_agent.agent", opspilot_stub)
     get_settings.cache_clear()
-    server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning", proxy_headers=False))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     while not server.started:

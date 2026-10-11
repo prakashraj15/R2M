@@ -2,6 +2,7 @@
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 import anyio.to_thread
 import asyncpg
@@ -361,8 +362,16 @@ async def test_csrf_header_and_rate_limits(app):
         assert (await s.post("/api/v1/ingest/events", json={"events": [event("execution.started", uuid.uuid4())]})).status_code == 202
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=CSRF) as c:
-        codes = [(await c.post("/api/v1/demo/session", json={"email": "nobody@x.test"})).status_code for _ in range(21)]
-    assert codes[:19] == [401] * 19 and set(codes[19:]) == {429}  # 20/min per IP, incl. the login above
+        spoof = [{"x-forwarded-for": f"10.0.0.{i}"} for i in range(21)]  # rotating XFF must not reset the limit
+        with mock.patch.dict("r2m_platform.guards.ROUTE_LIMITS", {("POST", "/api/v1/demo/session"): ("login", 20)}):
+            codes = [(await c.post("/api/v1/demo/session", json={"email": "nobody@x.test"}, headers=h)).status_code
+                     for h in spoof]
+    assert codes[:19] == [401] * 19 and set(codes[19:]) == {429}  # login limit (patched to 20), incl. the login above
+
+    from types import SimpleNamespace
+    from r2m_platform.guards import client_ip
+    spoofed = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"), headers={"x-forwarded-for": "6.6.6.6"})
+    assert client_ip(spoofed) == "127.0.0.1"  # X-Forwarded-For is never trusted
 
     now = [0.0]
     limiter = RateLimiter(clock=lambda: now[0])
