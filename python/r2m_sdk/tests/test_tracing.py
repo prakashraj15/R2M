@@ -56,6 +56,7 @@ def test_model_call_records_simulated_usage(client, platform):
     usage = platform.events_of(EventKind.USAGE.value)[0]["attributes"]
     assert usage["cost_source"] == "simulated"
     assert usage["amount_usd"] == pytest.approx(0.006)
+    assert (usage["input_tokens"], usage["output_tokens"]) == (1000, 200)  # counters are not secrets
     assert platform.events_of("span")[0]["span_kind"] == "model"
 
 
@@ -81,10 +82,32 @@ def test_failed_batches_are_retained_not_lost(client, platform):
 
 def test_redaction_of_attributes(client, platform):
     with client.execution():
-        client.event(EventKind.INSIGHT, "x", {"api_key": "abc", "note": "mail bob@corp.com Bearer xyz.123",
+        client.event(EventKind.INSIGHT, "x", {"api_key": "abc", "access_token": "t", "grant-token": "g",
+                                              "note": "mail bob@corp.com Bearer xyz.123",
                                               "card": "4111 1111 1111 1111"})
     client.flush()
     attrs = platform.events_of("insight")[0]["attributes"]
-    assert attrs["api_key"] == "[REDACTED]"
+    assert attrs["api_key"] == attrs["access_token"] == attrs["grant-token"] == "[REDACTED]"
     assert "bob@corp.com" not in attrs["note"] and "xyz.123" not in attrs["note"]
     assert attrs["card"] == "[CARD]"
+
+
+def test_events_outside_execution_are_dropped_except_heartbeat(client, platform):
+    with client.span("orphan"):
+        pass
+    client.heartbeat()
+    client.flush()
+    assert client.dropped_outside_execution == 1
+    assert [e["kind"] for e in platform.events.values()] == ["heartbeat"]
+    assert not platform.rejected_events
+
+
+def test_component_attribute_on_spans_and_model_calls(client, platform):
+    with client.execution():
+        with client.span("plan", component="orchestrator"):
+            with client.model_call("opspilot-sim-1", component="sim-llm") as call:
+                call.record(input_tokens=10, output_tokens=5)
+    client.flush()
+    comps = {e["name"]: e["attributes"].get("component") for e in platform.events_of("span")}
+    assert comps == {"plan": "orchestrator", "model:opspilot-sim-1": "sim-llm"}
+    assert platform.events_of("usage")[0]["attributes"]["component"] == "sim-llm"

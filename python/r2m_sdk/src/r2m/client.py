@@ -121,6 +121,7 @@ class R2MClient:
         self._policies: dict[str, Policy] = {}
         self._verified_hashes: dict[str, str] = {}
         self._revision_ids: dict[str, str] = {}
+        self.dropped_outside_execution = 0
 
     @classmethod
     def from_env(cls, **overrides: Any) -> "R2MClient":
@@ -198,15 +199,19 @@ class R2MClient:
         return lambda fn: build_tool(self, fn, spec)
 
     def span(self, name: str, kind: SpanKind = SpanKind.ORCHESTRATION,
-             attributes: dict[str, Any] | None = None) -> Span:
-        return Span(self, name, kind, attributes)
+             attributes: dict[str, Any] | None = None, *, component: str | None = None) -> Span:
+        """``component`` is a topology ``component_key``; it feeds that node's calls/errors/p95/cost."""
+        attrs = dict(attributes or {})
+        if component:
+            attrs["component"] = component
+        return Span(self, name, kind, attrs)
 
     def traced(self, name: str | None = None, kind: SpanKind = SpanKind.ORCHESTRATION) -> Callable[[F], F]:
         return traced(self, name, kind)
 
     def model_call(self, model: str, *, provider: str = "simulated", purpose: str | None = None,
-                   cost_source: CostSource | None = None) -> ModelCall:
-        return ModelCall(self, model, provider, purpose, cost_source)
+                   cost_source: CostSource | None = None, component: str | None = None) -> ModelCall:
+        return ModelCall(self, model, provider, purpose, cost_source, component)
 
     def execution(self, scenario: str | None = None, *, execution_id: str | None = None,
                   trace_id: str | None = None, metadata: dict[str, Any] | None = None,
@@ -288,6 +293,11 @@ class R2MClient:
               duration_ms: float | None = None, attributes: dict[str, Any] | None = None,
               occurred_at: str | None = None) -> None:
         execution = _ctx.current_execution()
+        if execution is None and kind != EventKind.HEARTBEAT:
+            # The platform rejects these (execution_required); drop locally and say so.
+            self.dropped_outside_execution += 1
+            log.warning("r2m: %s event %r emitted outside an execution; dropped", kind.value, name)
+            return
         self.transport.emit({
             "event_id": str(uuid.uuid4()),
             "schema_version": SCHEMA_VERSION,

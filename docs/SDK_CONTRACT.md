@@ -167,3 +167,22 @@ Status values: `ok`, `error`, `running`, `denied`, `pending_approval`.
 - If a policy throws, the result is `DENY POLICY_EVALUATION_ERROR`.
 - Unguarded tools are traced with `coverage: "observed"`. R2M doesn't claim to prevent calls that bypass the SDK.
 - Approving a policy revision doesn't approve future actions. Each REQUIRE_APPROVAL action needs its own runtime approval, and that approval is usable exactly once.
+
+## 7. Backend behaviour stricter than `FakePlatform` (confirmed by the backend, 2026-10-11)
+
+`FakePlatform` now mirrors all five rules; pass `auto_deploy=False` to get rule 1.
+
+1. **New builds start as `proposed`.** `register_agent` with a never-seen `artifact_digest` returns `deployment_status: "proposed"`. Guarded tools get `DENY DEPLOYMENT_NOT_ACTIVE` until a release manager runs `releases/evaluate` and then `deploy`.
+2. **Governing policies must be cited.** Every registered policy that lists the tool must appear in `policies`, or the response is `DENY GOVERNING_POLICY_NOT_CITED:<id>`. This stops a build that drops a decorator's policy binding from authorizing on its own. The server applies the strictest of `local_decision` and every per-policy `decision`.
+3. **One grant per approval.** The runtime approval becomes `consumed` when its grant is *issued*. A replayed resume gets `DENY APPROVAL_CONSUMED`; an approval past its window gets `DENY APPROVAL_EXPIRED`.
+4. **Tampered policies are refused.** The same `(id, version)` with a different hash returns `hash_matches: false`, `status: "rejected"` and `revision_id: null`, and opens a high-severity `policy_hash_mismatch:<id>` incident. The SDK then fails closed locally for that policy's tools.
+5. **Only heartbeats may omit the execution.** Any other event with `execution_id: null` is rejected as `execution_required`. The SDK drops such events itself before sending, logs a warning and counts them in `R2MClient.dropped_outside_execution`.
+
+## 8. Conventions the platform relies on
+
+- **Topology:** spans and model calls carry `attributes.component = <component_key>` (`client.span(..., component=)`, `client.model_call(..., component=)`, `client.tool(..., component=)`). Usage events also carry `component`.
+- **Workflow spans:** OpsPilot names its orchestrator spans `step:<STATE>`. The Keewano adapter reads only these attributes, and only after allowlisting them:
+  - `step:DIAGNOSE`: `category`, `deployment_version`
+  - `step:PROPOSE`: `tool`
+  - `step:VERIFY`: `tool`, `recovered`, `category`, `deployment_version`
+- **Insight events:** `kind: "insight"`, `name: "keewano.remediation_history"`. Attributes are `insight_id`, `status` (ok/failed/unavailable), `sample_count`, `supported`, `label`, `proposed_action`, `proposal_source` (keewano/deterministic) and `keewano_informed`.
