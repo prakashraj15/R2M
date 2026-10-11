@@ -1970,3 +1970,125 @@ pre {
     width: 42px;
   }
 }
+
+/* Connected OpsPilot views */
+.live-shell main {
+  max-width: 1600px;
+  margin: auto;
+}
+.live-shell .r2m-mark {
+  width: 95px;
+}
+.live-nav {
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+.live-error {
+  background: #fff0f1;
+  border: 1px solid #f1c1c7;
+  padding: 14px;
+  border-radius: 10px;
+  margin: 12px 0;
+  color: #9c2334;
+  overflow-wrap: anywhere;
+}
+.live-guide {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 12px;
+  line-height: 1.6;
+}
+.plain-reply {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.reason-code {
+  display: block;
+  margin: 9px 0;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.live-timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 14px 0 14px 15px;
+  font-size: 10px;
+  color: #6a7881;
+}
+.live-shell .scenario-controls .button {
+  display: block;
+  width: 100%;
+  margin-bottom: 10px;
+  white-space: normal;
+  text-align: left;
+}
+.history-candidate {
+  margin: 15px 0;
+}
+.history-candidate progress {
+  display: block;
+  width: 100%;
+  accent-color: #99c52d;
+}
+.approval-highlight {
+  outline: 3px solid #b6e84c;
+  border-radius: 14px;
+}
+.live-shell .panel {
+  margin-bottom: 18px;
+}
+.live-shell pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 360px;
+  overflow: auto;
+}
+.live-span {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(60px, 1fr) 85px;
+  width: 100%;
+  gap: 14px;
+  border: 0;
+  border-bottom: 1px solid #e0e6e9;
+  padding: 14px 0;
+  text-align: left;
+  background: white;
+  align-items: center;
+}
+.live-span small {
+  display: block;
+  color: #78848b;
+}
+.live-span-track {
+  display: block;
+  background: #f2f5ef;
+  overflow: hidden;
+}
+.live-span-track i {
+  display: block;
+  height: 9px;
+  background: #a6cf3d;
+}
+.live-shell details {
+  margin: 12px 0;
+}
+.live-shell summary {
+  cursor: pointer;
+}
+@media (max-width: 760px) {
+  .live-shell .topbar {
+    height: auto;
+    min-height: 75px;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 12px;
+  }
+  .live-shell .top-actions {
+    flex-wrap: wrap;
+  }
+  .live-shell .top-actions select {
+    max-width: 240px;
+  }
+}

@@ -6,11 +6,18 @@ import { ArrowLeft, FlaskConical } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { RoleSwitcher } from "./RoleSwitcher";
 import { OrgSwitcher } from "./OrgSwitcher";
-import { DemoGuide } from "@/components/demo/DemoGuide";
+import { MockDemoGuide } from "@/components/demo/MockDemoGuide";
+import { LiveShell } from "@/components/live/LiveShell";
 import { BrandMark } from "@/components/brand/BrandMark";
 export function AppShell({ children }: { children: ReactNode }) {
   const path = usePathname();
   if (path === "/session" || path === "/live") return <>{children}</>;
+  if (
+    path.startsWith("/demo/") ||
+    path === "/approvals" ||
+    /^\/agents\/(?!opspilot(?:\/|$))/.test(path)
+  )
+    return <LiveShell>{children}</LiveShell>;
   const demo = path.startsWith("/demo");
   return (
     <div className={demo ? "demo-shell" : "app-shell"}>
@@ -52,7 +59,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           identities <span>·</span> Changes last until refresh
         </div>
         <main>
-          <DemoGuide />
+          <MockDemoGuide />
           {children}
         </main>
         <footer>

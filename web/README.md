@@ -47,3 +47,13 @@ The older HTML exploration remains in `../docs/prototypes/r2m` as a visual refer
 Checked against origin/backend. public/.gitkeep preserves Docker's copy source. Browser helpers use relative /api/v1 and cookies; api.server.ts forwards the incoming cookie to the private origin with no caching. The proxy is fixed to loopback port 8000. No public credentials were added.
 
 /session provides a backend-connected identity picker and /me viewer, separate from local mock role controls. Product screens still need DTO adapters and endpoint wiring. Unmapped endpoint helpers intentionally return unknown instead of casting responses to mock data. See ../docs/DEMO_SCRIPT.md for the release sequence. Proposed mock builds cannot run until release evaluation and deployment complete.
+
+## Connected OpsPilot (current)
+
+`/demo/agent` now uses the backend API, real demo sessions and `demo.use`, never MockProvider. `/approvals` uses backend can_decide. Agent UUID routes render API topology, policies, evaluations/release, traces, incidents, cost provenance and evidence. The root overview and slug-based `/agents/opspilot` workspace remain legacy mock previews and are explicitly separated by navigation. The earlier mock walkthrough above is superseded for connected chat; use docs/DEMO_SCRIPT.md.
+
+Chat replies render as plain text. Mode badges come from the response. Scenario reset changes the starting world; the message drives agent decisions. Backend actions are never inferred from approving a request: Continue sends a new message, then the UI refetches service state. The integration toggle uses per-customer permissions. Session identity changes clear local chat history to avoid showing another identity's transcript.
+
+Local validation: 15 tests, typecheck and production build; browser exercised the optional UI contract fixture through customer chat, approval, Continue, exact trace navigation, customer redaction and null topology metrics. The fixture makes no external calls and cannot validate a real provider, policy gate or grant. To reproduce UI contract tests only, stop any backend on :8000 then run `node tests/fixtures/agent-server.cjs`. Stop it before running the actual backend. It is not started by the app or used as a fallback.
+
+The real backend was not running during this frontend pass. Live OpenAI/Keewano end-to-end validation still requires the privately configured server. Backend currently rejects no-deployed-build chat with 409 before invoking the agent, in contrast to the AI handover's proposed-build status-chat description; the UI displays the server error.

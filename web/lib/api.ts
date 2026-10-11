@@ -1,4 +1,5 @@
 import type { ApiErrorBody } from "./types";
+import type { DemoState, AgentReply, LiveScenario } from "./live-types";
 export class ApiError extends Error {
   public status: number;
   public body: ApiErrorBody;
@@ -190,16 +191,17 @@ export const api = {
     }),
   queryIntegration: (installation_id: string, question: string) =>
     post("/integrations/keewano/query", { installation_id, question }),
-  agentState: () => request("/demo/agent/state"),
-  message: (
-    message: string,
-    scenario: "healthy" | "degraded" | "approval",
-    installation?: string,
-  ) =>
-    post(
+  agentState: (installation?: string) =>
+    request<DemoState>(
+      `/demo/agent/state${installation ? `?installation_id=${id(installation)}` : ""}`,
+    ),
+  message: (message: string, scenario: LiveScenario, installation?: string) =>
+    post<AgentReply>(
       `/demo/agent/message${installation ? `?installation_id=${id(installation)}` : ""}`,
       { message, scenario },
     ),
-  resetScenario: (scenario: string) =>
-    post(`/demo/agent/scenarios/${id(scenario)}/reset`),
+  resetScenario: (scenario: string, installation?: string) =>
+    post(
+      `/demo/agent/scenarios/${id(scenario)}/reset${installation ? `?installation_id=${id(installation)}` : ""}`,
+    ),
 };

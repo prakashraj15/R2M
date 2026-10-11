@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { MockProvider } from "@/components/MockProvider";
 import { AppShell } from "@/components/navigation/AppShell";
+import { LiveProvider } from "@/components/live/LiveProvider";
 import "@/styles/globals.css";
 import "@xyflow/react/dist/style.css";
 export const metadata: Metadata = {
@@ -17,7 +18,9 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <MockProvider>
-          <AppShell>{children}</AppShell>
+          <LiveProvider>
+            <AppShell>{children}</AppShell>
+          </LiveProvider>
         </MockProvider>
       </body>
     </html>

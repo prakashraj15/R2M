@@ -1,36 +1,19 @@
-# R2M demo script
+# Connected OpsPilot demo
 
-## Frontend-only rehearsal
+The `/demo/agent` UI now calls the backend. Model replies are plain text. The mode badge comes only from the response: live, deterministic, or fallback. It does not use MockProvider or dispatch local run commands.
 
-Run `cd web` then `npm ci` and `npm run dev`. The dashboard uses local fixtures; it does not call backend services. State resets on refresh. Demo authentication, not production.
+1. Start the backend on 127.0.0.1:8000 using its README and privately configured environment. Start `web` with `npm ci` and `npm run dev`. Choose Meridian Operations in the backend identity picker. Ask “How is payments-api doing?”. Proposed-build actions are denied. **Current branch mismatch:** the backend route inspected at origin/backend still returns 409 no_active_deployment before calling the agent if there is no deployed build. The UI displays that response; proposed-build status chat needs a backend change.
+2. CI publishes the evaluation suites for safe-1.0 and faulty-1.0. In the connected Policies view, Atlas Developer submits DEPLOY-001, CAPACITY-001 and DATA-001. Meridian Security approves the revisions. Atlas Release opens Evaluations, evaluates release eligibility and deploys the eligible safe build. The UI never runs CI suites itself or invents passing results.
+3. Choose Degraded to reset the backend world, then send “payments-api is throwing errors, fix it”. Inspect the returned proposal, reasons, mode, cost provenance and Keewano history. History is untrusted advisory data, not authorization. The integration toggle is shown only with the customer's integration.configure permission.
+4. Follow Review in R2M to the highlighted exact-action approval. Switch to Meridian Security; review tool arguments and digest, enter a reason and approve. The UI uses can_decide from the backend.
+5. Return to chat and refresh. Once the backend lists the approval as approved, Continue sends a new message. Verify the returned trace/execution IDs, ALLOW, verified and service_after. Do not treat approval alone as execution.
+6. As Atlas Developer reset Faulty, then send “Run the faulty build rollback”. Render the returned denial and refused recent action; inspect Security for the real incident. Customer identities always use normal governed tools even in this scenario.
+7. Open the UUID-based agent workspace to inspect real topology (including openai-llm), trace depth/timing and customer redactions, evaluations, costs by provenance, incidents and evidence integrity.
 
-1. Atlas / Release manager: open Build evaluations. Replay the safe build checks, and compare the faulty build's mandatory failure.
-2. Meridian / Security reviewer: approve DEPLOY-001 with a review reason. This publishes the policy; it does not approve any runtime action.
-3. Atlas / Release manager: evaluate release eligibility for safe-1.0, then simulate deployment. A proposed build cannot run. The faulty build remains blocked.
-4. Open OpsPilot, select approval-required rollback and send a message. The action waits; the service remains unchanged.
-5. Meridian / Security reviewer: decide the exact runtime action in Approvals. Inspect its linked trace. Approval permits the simulated effect once; rejection leaves it unexecuted.
-6. Inspect costs and evidence. Both are simulated; the export is not a backend integrity attestation.
+Scenario changes call reset and refetch service state; pending approvals do not disable reset. Messages are limited to 2000 characters and duplicate in-flight submissions are blocked. No message is retried after a network or server error. Explicit pre-execution 429 rate_limited responses follow Retry-After, bounded to three retries.
 
-## Connected integration sequence (backend + AI required)
+## Scope and validation
 
-All browser paths below are relative to `/api/v1`.
+The root organization overview and `/agents/opspilot` legacy workspace remain an explicitly labelled mock preview. `/demo/agent`, `/approvals` and `/agents/{uuid}` use API records. No mock fallback is used on connected screens. All write requests send X-R2M-CSRF: 1; sessions are HttpOnly and inspected through /me. Secrets stay on the backend.
 
-1. Open `/session`, load `GET /demo/identities`, select an identity through `POST /demo/session`, then obtain identity and organization permissions from `GET /me`. Never read the HttpOnly cookie.
-2. AI developer registers the build and publishes build evaluation results. Registration creates a `proposed` deployment. Frontend reads evaluations; the browser does not execute CI tests.
-3. Vendor developer submits the policy revision with its installation ID. Customer reviewer decides the submission.
-4. Release manager calls `POST /agents/{id}/releases/evaluate` with the same installation, build version and artifact digest used by AI registration/evaluations. Display all returned checks. Only then call `POST /agents/{id}/deployments/{deployment_id}/deploy`.
-5. Send `/demo/agent/message` using `scenario: approval` for the rollback story (local mock calls this `rollback`). A 503 `agent_unavailable` means the AI package has not landed; show unavailable, never fabricate a response.
-6. Review the runtime action using `kind: runtime_action` and `can_decide`. Refetch state/trace after deciding: an approval alone is not evidence the tool executed.
-7. Render trace depth/timestamps, customer redaction, Unknown/null metrics, cost provenance, coverage explanation and evidence integrity from API data.
-
-## Integration status
-
-Transport helpers exist for the supplied endpoints, plus a real session picker at `/session` and a server-only cookie-forwarding GET helper. Existing product screens still use MockProvider and require DTO adapters and API state wiring. No connected end-to-end run has been claimed. Backend source inspected on origin/backend; it has not been merged into this frontend branch.
-
-## Updated browser contract (backend 6f7a74a)
-
-Every browser mutation, including login/logout, sends X-R2M-CSRF: 1. The client retries explicit 429 rate_limited responses after Retry-After (seconds or HTTP date), up to three retries; persistent errors remain visible. It does not retry network or 5xx mutation failures. Server reads use the same rate-limit handling and retain the forwarded cookie. Incident updates use PATCH /incidents/{id} with status and optional note.
-
-For connected approval demos, approval does not execute the action by itself. Send a follow-up agent message to resume the same execution/action, then refetch state and trace to confirm the actual effect. The frontend-only rehearsal simulates this completion locally and must not be presented as the connected behavior.
-
-Allow the documented database round-trip latency in loading states; do not substitute mock success or missing values with zero. Backend runtime validation still requires privately configured server environment values and the AI package. No secrets belong in this document or frontend code.
+Real OpenAI/Keewano end-to-end verification requires the backend to be running with its private configuration. The AI team's reported verification is not a frontend test result. UI contract fixtures and local tests cannot prove a live provider call or grant enforcement.
