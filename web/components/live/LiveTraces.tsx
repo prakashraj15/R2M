@@ -37,7 +37,15 @@ function privateFields(value: unknown): unknown {
     );
   return value;
 }
-function Detail({ trace }: { trace: string }) {
+function Detail({
+  trace,
+  base,
+  query,
+}: {
+  trace: string;
+  base: string;
+  query: string;
+}) {
   const r = useResource<TraceData>(`/traces/${encodeURIComponent(trace)}`);
   const [selected, setSelected] = useState("");
   const data = r.data;
@@ -101,6 +109,14 @@ function Detail({ trace }: { trace: string }) {
               title={span.name}
               subtitle={`Component: ${String(span.attributes?.component || span.attributes?.component_key || "Unknown")}`}
             >
+              {typeof span.attributes?.component === "string" && (
+                <Link
+                  className="text-link"
+                  href={`${base}?${query}&component=${encodeURIComponent(span.attributes.component)}`}
+                >
+                  Show component in topology
+                </Link>
+              )}
               <pre>
                 {JSON.stringify(
                   data.redacted_for_customer
@@ -176,7 +192,7 @@ export function LiveTraces({
   }>(`${path}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
   return (
     <>
-      {trace && <Detail trace={trace} />}
+      {trace && <Detail trace={trace} base={base} query={query} />}
       <ResourceStatus {...r} />
       <Panel title="Executions">
         <div className="panel-body">
