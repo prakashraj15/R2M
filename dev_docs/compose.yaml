@@ -1,0 +1,18 @@
+services:
+  r2m:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: r2m:prototype
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "python", "docker/healthcheck.py"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
