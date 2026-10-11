@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 160" fill="none" role="img" aria-labelledby="title desc">
+<title id="title">R2M shared-stroke monogram concept</title>
+<desc id="desc">A graphite R stem and leg combine with a lime curved numeral two, followed by a graphite M.</desc>
+<path d="M24 136V24M78 83L128 136" stroke="#25323d" stroke-width="16" stroke-linecap="square" stroke-linejoin="round"/>
+<path d="M24 24H77C129 24 130 66 99 87L38 128H128" stroke="#c9fa56" stroke-width="16" stroke-linecap="square" stroke-linejoin="round"/>
+<path d="M164 136V24L216 88L268 24V136" stroke="#25323d" stroke-width="16" stroke-linecap="square" stroke-linejoin="miter"/>
+</svg>

@@ -10,7 +10,11 @@ export class ApiError extends Error {
 }
 export async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const raw = await response.json().catch(() => ({}));
+    const payload: unknown = await response.json().catch(() => null);
+    const raw =
+      payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>)
+        : {};
     throw new ApiError(response.status, {
       code: typeof raw.code === "string" ? raw.code : "http_error",
       message:
@@ -21,11 +25,58 @@ export async function parseResponse<T>(response: Response): Promise<T> {
             : typeof raw.message === "string"
               ? raw.message
               : "The API request could not be completed.",
-      request_id: raw.request_id || response.headers.get("x-request-id") || "",
+      request_id:
+        typeof raw.request_id === "string"
+          ? raw.request_id
+          : response.headers.get("x-request-id") || "",
     });
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+export function retryAfterMs(value: string | null, now = Date.now()): number {
+  if (value === null) return 1000;
+  if (/^\d+(\.\d+)?$/.test(value.trim())) return Number(value) * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - now) : 1000;
+}
+async function pause(ms: number, signal?: AbortSignal | null) {
+  signal?.throwIfAborted();
+  // Chunk large HTTP-date delays rather than overflowing setTimeout's limit.
+  while (ms > 0) {
+    const chunk = Math.min(ms, 2_147_483_647);
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => {
+        clearTimeout(timer);
+        reject(signal?.reason);
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", abort);
+        resolve();
+      }, chunk);
+      signal?.addEventListener("abort", abort, { once: true });
+    });
+    ms -= chunk;
+  }
+  signal?.throwIfAborted();
+}
+export async function fetchWithRateLimit(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  // Retry only explicit pre-execution rate-limit responses, never arbitrary
+  // network/5xx failures: replaying a successful mutation could duplicate it.
+  for (let attempt = 0; ; attempt++) {
+    init.signal?.throwIfAborted();
+    const response = await fetch(url, init);
+    if (response.status !== 429 || attempt === 3) return response;
+    const body = await response
+      .clone()
+      .json()
+      .catch(() => null);
+    if (body?.code !== "rate_limited") return response;
+    await pause(retryAfterMs(response.headers.get("Retry-After")), init.signal);
+  }
 }
 export async function request<T = unknown>(
   path: string,
@@ -36,8 +87,14 @@ export async function request<T = unknown>(
   const headers = new Headers(init.headers);
   if (init.body) headers.set("Content-Type", "application/json");
   headers.set("X-Request-ID", crypto.randomUUID());
+  if (
+    ["POST", "PUT", "PATCH", "DELETE"].includes(
+      (init.method || "GET").toUpperCase(),
+    )
+  )
+    headers.set("X-R2M-CSRF", "1");
   return parseResponse<T>(
-    await fetch(`/api/v1${path}`, {
+    await fetchWithRateLimit(`/api/v1${path}`, {
       ...init,
       headers,
       credentials: "same-origin",
@@ -113,6 +170,15 @@ export const api = {
   metrics: (agent: string, range = "24h") =>
     request(`/agents/${id(agent)}/metrics?range=${id(range)}`),
   incidents: (agent: string) => request(`/agents/${id(agent)}/incidents`),
+  updateIncident: (
+    incident: string,
+    status: "open" | "investigating" | "resolved",
+    note?: string,
+  ) =>
+    request(`/incidents/${id(incident)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, note }),
+    }),
   evidence: (agent: string) => request(`/agents/${id(agent)}/evidence`),
   exportEvidence: (agent: string) =>
     request(`/agents/${id(agent)}/evidence/export`),
