@@ -26,3 +26,11 @@ All browser paths below are relative to `/api/v1`.
 ## Integration status
 
 Transport helpers exist for the supplied endpoints, plus a real session picker at `/session` and a server-only cookie-forwarding GET helper. Existing product screens still use MockProvider and require DTO adapters and API state wiring. No connected end-to-end run has been claimed. Backend source inspected on origin/backend; it has not been merged into this frontend branch.
+
+## Updated browser contract (backend 6f7a74a)
+
+Every browser mutation, including login/logout, sends X-R2M-CSRF: 1. The client retries explicit 429 rate_limited responses after Retry-After (seconds or HTTP date), up to three retries; persistent errors remain visible. It does not retry network or 5xx mutation failures. Server reads use the same rate-limit handling and retain the forwarded cookie. Incident updates use PATCH /incidents/{id} with status and optional note.
+
+For connected approval demos, approval does not execute the action by itself. Send a follow-up agent message to resume the same execution/action, then refetch state and trace to confirm the actual effect. The frontend-only rehearsal simulates this completion locally and must not be presented as the connected behavior.
+
+Allow the documented database round-trip latency in loading states; do not substitute mock success or missing values with zero. Backend runtime validation still requires privately configured server environment values and the AI package. No secrets belong in this document or frontend code.
