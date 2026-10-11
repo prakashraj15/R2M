@@ -1,0 +1,25 @@
+services:
+  r2m:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: r2m:prototype
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env
+    environment:
+      # Overrides .env so the same file works for local scripts (./secrets/...) and the container.
+      DATABASE_CA_CERT: /run/certs/aiven-ca.pem
+      R2M_INTERNAL_API_URL: http://127.0.0.1:8000
+    volumes:
+      # Aiven project CA (public certificate, not a secret). Download from the Aiven console.
+      - ./secrets/aiven-ca.pem:/run/certs/aiven-ca.pem:ro
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "python", "docker/healthcheck.py"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
