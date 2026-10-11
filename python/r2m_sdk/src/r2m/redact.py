@@ -10,8 +10,9 @@ MAX_ITEMS = 50
 REDACTED = "[REDACTED]"
 
 _SENSITIVE_KEY = re.compile(
-    r"(secret|token|password|passwd|api[_-]?key|^(proxy[_-])?authorization$|cookie|credential|private[_-]?key|ssn"
-    r"|card[_-]?number|iban)",
+    # "token" only as a whole key or suffix (access_token, grant-token), never counters like input_tokens.
+    r"(secret|(^|[_-])token$|password|passwd|api[_-]?key|^(proxy[_-])?authorization$|cookie|credential"
+    r"|private[_-]?key|(^|[_-])ssn$|card[_-]?number|iban)",
     re.IGNORECASE,
 )
 _PATTERNS = [

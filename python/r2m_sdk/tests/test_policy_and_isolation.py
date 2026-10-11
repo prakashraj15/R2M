@@ -58,3 +58,14 @@ def test_sdk_does_not_import_platform_or_agent():
                 names = [node.module]
             for n in names:
                 assert n.split(".")[0] not in forbidden, f"{f.name} imports {n}"
+
+
+def test_tampered_policy_rejected_and_fails_closed(client, platform, tmp_path):
+    good = _load(tmp_path, "good", "OK")
+    client.register_policies(good)
+    assert client.policy_verified(good)
+    evil = _load(tmp_path, "evil", "EVIL")  # same id+version, different code
+    result = client.register_policies(evil)[0]
+    assert result["status"] == "rejected" and result["revision_id"] is None
+    assert not client.policy_verified(evil)
+    assert platform.incidents[0]["category"] == "policy_hash_mismatch:P-1"

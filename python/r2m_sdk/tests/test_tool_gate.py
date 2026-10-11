@@ -92,10 +92,11 @@ def test_rollback_requires_exact_action_approval_then_runs_once(client, platform
             assert rollback("2.0") == {"version": "2.0"}
     assert calls == [("rollback", "2.0")]
 
-    # The approval is consumed; trying again needs a new approval.
+    # One grant per approval: a replayed resume is denied.
     with client.execution(execution_id=run.execution_id, resume=True):
-        with resume_action(action_id), pytest.raises(ApprovalRequired):
+        with resume_action(action_id), pytest.raises(PolicyDenied) as replay:
             rollback("2.0")
+    assert "APPROVAL_CONSUMED" in replay.value.reason_codes
     assert calls == [("rollback", "2.0")]
 
 
@@ -130,21 +131,6 @@ def test_unapproved_policy_hash_denied_by_server(client, platform, tools):
             scale(2)
     assert err.value.reason_codes == ("POLICY_NOT_APPROVED:TEST-SCALE",)
     assert calls == []
-
-
-def test_unverified_registration_fails_closed_locally(client, platform):
-    platform.reject_hash_for.add("TEST-SCALE")
-    client.register_policies(scale_limit)
-    ran = []
-
-    @client.tool("scale", risk="high", policies=[scale_limit])
-    def scale(replicas: int):
-        ran.append(replicas)
-
-    with client.execution():
-        with pytest.raises(PolicyActivationError):
-            scale(1)
-    assert ran == [] and not platform.decisions
 
 
 def test_crashing_policy_denies(client, tools):
@@ -218,3 +204,35 @@ async def test_async_guarded_tool(client, platform):
     async with client.execution():
         assert await scale(2) == 2
     assert next(iter(platform.actions.values())).executed
+
+
+def test_proposed_build_cannot_act(platform, client, tools):
+    calls, _, _, scale, _ = tools
+    platform.deployments[client.deployment_id] = "proposed"
+    with client.execution():
+        with pytest.raises(PolicyDenied) as err:
+            scale(2)
+    assert err.value.reason_codes == ("DEPLOYMENT_NOT_ACTIVE",)
+    assert calls == []
+
+
+def test_dropping_a_governing_policy_is_denied(client, platform, tools):
+    ran = []
+
+    @client.tool("scale", risk="high")  # a build that "forgot" CAPACITY's binding
+    def scale(replicas: int):
+        ran.append(replicas)
+
+    with client.execution():
+        with pytest.raises(PolicyDenied) as err:
+            scale(2)
+    assert err.value.reason_codes == ("GOVERNING_POLICY_NOT_CITED:TEST-SCALE",)
+    assert ran == []
+
+
+def test_grant_claim_is_single_use(client, platform, tools):
+    _, _, _, scale, _ = tools
+    with client.execution() as run:
+        scale(2)
+    assert platform.claim_grant(run.execution_id, "scale") is not None
+    assert platform.claim_grant(run.execution_id, "scale") is None

@@ -22,6 +22,7 @@ from ..errors import ApiError, not_found
 from ..schemas import DemoMessageIn
 from ..services import simulation
 from ..services.evidence_builder import audit
+from ..services.insight_query import AgentInsights
 from ..services.trace_ingest import sanitize
 
 router = APIRouter(tags=["demo-agent"])
@@ -61,6 +62,7 @@ async def message(body: DemoMessageIn, request: Request, installation_id: UUID |
         raise ApiError(503, "agent_unavailable", "mock agent package is not installed")
     context = {
         "world": simulation.SimulationWorld(request.app.state.pool, inst["customer_org_id"], inst["id"]),
+        "insights": AgentInsights(request.app.state.pool, inst, cfg.keewano_enabled),
         "agent_id": str(inst["agent_id"]), "installation_id": str(inst["id"]), "deployment_id": str(dep["id"]),
         "build_version": dep["version"], "customer_org_id": str(inst["customer_org_id"]),
         "vendor_org_id": str(inst["vendor_org_id"]), "environment": inst["environment"],

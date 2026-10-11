@@ -1,5 +1,4 @@
 """Keewano is optional and advisory. Results are untrusted data and never authorize actions."""
-import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
@@ -10,6 +9,7 @@ from ..dependencies import actor, db, settings
 from ..errors import ApiError, not_found
 from ..schemas import IntegrationToggleIn, KeewanoQueryIn
 from ..services.evidence_builder import audit
+from ..services.insight_query import run_insight_query
 from ..workers.event_outbox import adapter
 
 router = APIRouter(tags=["integrations"])
@@ -47,19 +47,4 @@ async def query(body: KeewanoQueryIn, a: Actor = Depends(actor), conn=Depends(db
     inst = await installation_in_scope(conn, a, body.installation_id)
     if not (a.can("integration.query", inst["customer_org_id"]) or a.can("integration.query", inst["vendor_org_id"])):
         raise ApiError(403, "forbidden", "requires integration.query")
-    enabled = await conn.fetchval(
-        "SELECT enabled FROM integration_configs WHERE organization_id=$1 AND provider='keewano'", inst["customer_org_id"])
-    mod = adapter()
-    if not (cfg.keewano_enabled and enabled and mod):
-        return {"status": "unavailable", "message": "intelligence unavailable: Keewano integration disabled or not installed"}
-    try:
-        result = await asyncio.wait_for(mod.query(body.question, {"installation_id": str(inst["id"])}), timeout=20)
-        status_ = "ok"
-    except Exception as exc:
-        result, status_ = {"error_class": type(exc).__name__}, "failed"
-    qid = await conn.fetchval(
-        """INSERT INTO insight_queries(installation_id, provider, prompt_summary, provider_request_id, response_summary, status, sample_count)
-           VALUES ($1,'keewano',$2,$3,$4,$5,$6) RETURNING id""",
-        inst["id"], body.question[:500], result.get("request_id"), result, status_,
-        result.get("sample_count") if isinstance(result.get("sample_count"), int) else None)
-    return {"status": status_, "insight_id": qid, "result": result, "trust": "untrusted advisory data"}
+    return await run_insight_query(conn, inst, body.question, cfg.keewano_enabled)

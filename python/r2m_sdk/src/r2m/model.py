@@ -15,7 +15,7 @@ class ModelCall:
     """``with client.model_call("opspilot-sim-1", provider="simulated") as call: ...; call.record(...)``"""
 
     def __init__(self, client: "R2MClient", model: str, provider: str, purpose: str | None,
-                 cost_source: CostSource | None):
+                 cost_source: CostSource | None, component: str | None = None):
         self._client = client
         self.model = model
         self.provider = provider
@@ -26,6 +26,8 @@ class ModelCall:
         attrs: dict[str, Any] = {"model": model, "provider": provider}
         if purpose:
             attrs["purpose"] = purpose
+        if component:
+            attrs["component"] = component
         self._span: "Span" = client.span(f"model:{model}", SpanKind.MODEL, attrs)
 
     def record(self, *, input_tokens: int, output_tokens: int, cost_usd: float | None = None) -> None:
@@ -46,6 +48,7 @@ class ModelCall:
         self._span._finish(exc)
         self._client._emit(EventKind.USAGE, f"usage:{self.model}", span_id=span_id, attributes={
             "component_kind": "model",
+            "component": self._span.attributes.get("component"),
             "model": self.model,
             "provider": self.provider,
             "input_tokens": self.input_tokens,
