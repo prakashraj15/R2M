@@ -17,10 +17,10 @@ import {
   FileCheck2,
   Inbox,
   ArrowUpRight,
-  Radio,
   PlugZap,
 } from "lucide-react";
 import { OrgSwitcher } from "./OrgSwitcher";
+import { BrandMark } from "@/components/brand/BrandMark";
 import { useMock } from "@/components/MockProvider";
 const agent = "/agents/opspilot";
 const links = [
@@ -43,11 +43,9 @@ export function Sidebar() {
   const count = state.approvals.filter((a) => a.status === "pending").length;
   return (
     <aside className="sidebar">
-      <Link className="brand" href="/">
-        <span className="brand-icon">
-          <Radio size={20} />
-        </span>
-        R2M<span className="beta">BETA</span>
+      <Link className="brand" href="/" aria-label="R2M home">
+        <BrandMark />
+        <span className="beta">BETA</span>
       </Link>
       <div className="brand-caption">RESPONSIBILITY TO MONITORING</div>
       <OrgSwitcher />

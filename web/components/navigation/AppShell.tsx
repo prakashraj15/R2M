@@ -7,6 +7,7 @@ import { Sidebar } from "./Sidebar";
 import { RoleSwitcher } from "./RoleSwitcher";
 import { OrgSwitcher } from "./OrgSwitcher";
 import { DemoGuide } from "@/components/demo/DemoGuide";
+import { BrandMark } from "@/components/brand/BrandMark";
 export function AppShell({ children }: { children: ReactNode }) {
   const path = usePathname();
   if (path === "/session") return <>{children}</>;
@@ -18,7 +19,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <header className="topbar">
           {demo ? (
             <Link href="/" className="back-link">
-              <ArrowLeft size={15} /> R2M control plane
+              <ArrowLeft size={15} /> <BrandMark /> Control plane
             </Link>
           ) : (
             <div className="breadcrumb">
