@@ -58,6 +58,7 @@ export function LiveShell({ children }: { children: ReactNode }) {
           <BrandMark />
         </Link>
         <div className="top-actions">
+          <Link href="/live">Dashboard</Link>
           <Link href="/agents/2246399b-c8bd-5598-b1c7-32a0da4d3d96">Agent workspace</Link>
           <select
             aria-label="Backend demo identity"
