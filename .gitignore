@@ -1,4 +1,5 @@
 .env
+secrets/
 .venv/
 __pycache__/
 *.pyc
@@ -10,3 +11,4 @@ node_modules/
 build/
 dist/
 *.egg-info/
+.DS_Store
