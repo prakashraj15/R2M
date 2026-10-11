@@ -27,6 +27,16 @@ PYTHONPATH=python uvicorn r2m_platform.main:app --host 127.0.0.1 --port 8000   #
 
 The frontend lives in `web/` (Next.js). It proxies `/api/*` to `127.0.0.1:8000`.
 
+### Frontend only (mock mode)
+
+The UI also runs on its own with shared mock state: no backend, secrets or accounts needed. All data, identities, permissions, build results and actions are simulated, and state resets on refresh.
+
+```sh
+cd web && npm ci && npm run dev    # http://127.0.0.1:3000
+```
+
+See [`web/README.md`](web/README.md) for routes, the walkthrough, validation commands and backend wiring.
+
 ## Demo flow (outline)
 
 The full narrative is in [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md).

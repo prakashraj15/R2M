@@ -12,3 +12,8 @@ coverage/
 node_modules/
 .next/
 .DS_Store
+out/
+*.tsbuildinfo
+.env.*
+!.env.example
+*.log

@@ -1,0 +1,3 @@
+const http=require('node:http');const fs=require('node:fs');const path=require('node:path');const root=path.join(__dirname,'dist');http.createServer((req,res)=>{const paths={'/':'index.html','/index.html':'index.html','/style.css':'style.css','/nocturne.css':'nocturne.css','/daylight.css':'daylight.css','/app.js':'app.js'};const name=paths[req.url.split('?')[0]];if(!name){res.writeHead(404);return res.end('Not found')}res.setHeader('Content-Type',name.endsWith('.css')?'text/css':name.endsWith('.js')?'text/javascript':'text/html');fs.createReadStream(path.join(root,name)).pipe(res)}).listen(4173,'127.0.0.1',()=>console.log('Local: http://127.0.0.1:4173'));
+
+
