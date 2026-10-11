@@ -7,18 +7,17 @@ import anyio.to_thread
 import asyncpg
 import httpx
 import pytest
-from conftest import reset_db
+from conftest import CSRF, bypass, reset_db
 from r2m.approvals import ActionGrant, GrantVerifier, arguments_hash
 from seed_demo import uid
 
+from r2m_platform.auth import issue_sdk_credential
 from r2m_platform.config import get_settings
 from r2m_platform.database import create_pool
 from r2m_platform.main import create_app
 from r2m_platform.services.simulation import SimulationWorld
 
 pytestmark = pytest.mark.anyio
-TOKEN = os.environ["SDK_INGEST_TOKEN"]
-SDK = {"authorization": f"Bearer {TOKEN}"}
 AGENT = uid("agent", "opspilot")
 MERIDIAN, NORTHWIND, ATLAS = uid("org", "meridian"), uid("org", "northwind"), uid("org", "atlas")
 M_INST = uid("installation", "opspilot:meridian")
@@ -41,19 +40,24 @@ async def app():
     pool = await create_pool(get_settings())
     application = create_app(lifespan=None)
     application.state.pool = pool
+    async with pool.acquire() as conn:  # per-customer SDK tokens for the Atlas → Meridian / Northwind pairs
+        application.state.tokens = {c: (await issue_sdk_credential(conn, os.environ["SDK_TOKEN_SECRET"], ATLAS, c, "tests"))[1]
+                                    for c in (MERIDIAN, NORTHWIND)}
     yield application
     await pool.close()
 
 
 async def login(app, email: str) -> httpx.AsyncClient:
-    c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=CSRF)
     r = await c.post("/api/v1/demo/session", json={"email": email})
     assert r.status_code == 200, r.text
     return c
 
 
-def sdk_client(app) -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=SDK)
+def sdk_client(app, customer=MERIDIAN) -> httpx.AsyncClient:
+    """SDK caller holding the per-customer token for Atlas → `customer`."""
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test",
+                             headers={"authorization": f"Bearer {app.state.tokens[customer]}"})
 
 
 def event(kind, execution_id, *, at=0, customer=MERIDIAN, deployment=M_DEP, **extra):
@@ -83,13 +87,15 @@ async def make_trace(app) -> uuid.UUID:
 
 
 async def test_requires_session_and_sdk_token(app):
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=CSRF) as c:
         assert (await c.get("/api/v1/me")).status_code == 401
         assert (await c.post("/api/v1/ingest/events", json={"events": []})).status_code == 401
-        assert (await c.post("/api/v1/agents", json={})).status_code == 401
         assert (await c.post("/api/v1/demo/session", json={"email": "intruder@evil.test"})).status_code == 401
         c.cookies.set("r2m_session", "forged.signature")
         assert (await c.get("/api/v1/me")).status_code == 401
+        for bad in ("not-a-token", "r2m_sdk_" + "0" * 32 + "_" + "f" * 64):  # wrong format / forged HMAC
+            r = await c.post("/api/v1/agents", json={}, headers={"authorization": f"Bearer {bad}"})
+            assert r.status_code == 401
 
 
 @pytest.mark.parametrize("path", ["topology", "deployments", "policies", "traces", "metrics", "incidents", "evidence"])
@@ -171,7 +177,7 @@ async def test_policy_approval_runtime_grant_and_single_use(app):
         allowed = (await s.post("/api/v1/actions/authorize", json=gate(ex, action_id=action_id))).json()
         assert (allowed["decision"], allowed["approval_status"]) == ("ALLOW", "approved")
         # The SDK's own verifier accepts the server-signed grant (byte-compatible signing).
-        GrantVerifier(TOKEN).verify(ActionGrant.from_dict(allowed["grant"]), tool="rollback_deployment",
+        GrantVerifier(app.state.tokens[MERIDIAN]).verify(ActionGrant.from_dict(allowed["grant"]), tool="rollback_deployment",
                                     args_hash=arguments_hash(ARGS), execution_id=str(ex),
                                     customer_org_id=str(MERIDIAN), deployment_id=str(M_DEP), action_id=action_id)
         again = (await s.post("/api/v1/actions/authorize", json=gate(ex, action_id=action_id))).json()
@@ -266,6 +272,7 @@ async def test_database_invariants(app):
         rev = (await s.post(f"/api/v1/agents/{AGENT}/policies/register", json={"policies": [DEPLOY_001]})).json()["policies"][0]
     sub = (await dev.post(f"/api/v1/agents/{AGENT}/policies/{rev['revision_id']}/submit", json={"installation_id": str(M_INST)})).json()
     async with app.state.pool.acquire() as conn:
+        await bypass(conn)
         with pytest.raises(asyncpg.CheckViolationError):  # self-approval blocked below the API too
             await conn.execute("INSERT INTO approval_decisions(submission_id, decided_by, decision) VALUES ($1,$2,'approve')",
                                sub["submission_id"], uid("user", "dev@atlas.demo"))
@@ -297,3 +304,69 @@ async def test_incident_resolution_is_scoped_and_audited(app):
     assert (await ops.get(overview)).json()["metrics"]["unresolved_high_severity_findings"] == 0
     evidence = (await ops.get(f"/api/v1/agents/{AGENT}/evidence")).json()["items"]
     assert any(e["evidence_type"] == "incident_status_changed" for e in evidence)
+
+
+async def test_sdk_tokens_are_customer_scoped_and_revocable(app):
+    ex = uuid.uuid4()
+    async with sdk_client(app) as s:  # Meridian token: no policy governs scale_instances yet, so it is allowed
+        allowed = (await s.post("/api/v1/actions/authorize", json=gate(
+            ex, tool="scale_instances", policies=[], local_decision="ALLOW"))).json()
+    assert allowed["decision"] == "ALLOW"
+    async with sdk_client(app, NORTHWIND) as nw:  # Atlas → Northwind token pointed at Meridian data
+        r = await nw.post("/api/v1/ingest/events", json={"events": [event("state.transition", ex)]})
+        assert r.json()["rejected"][0]["code"] == "scope_mismatch"
+        assert (await nw.post("/api/v1/actions/authorize", json=gate(ex, tool="scale_instances", policies=[],
+                                                                       local_decision="ALLOW"))).json()["reason_codes"] == ["TENANT_SCOPE_INVALID"]
+        grant = allowed["grant"]
+        r = await nw.post(f"/api/v1/actions/{allowed['action_id']}/result",
+                          json={"grant_id": grant["grant_id"], "nonce": grant["nonce"], "phase": "executed", "outcome": "succeeded"})
+        assert r.status_code == 404
+        assert (await nw.post(f"/api/v1/agents/{AGENT}/policies/register",
+                              json={"installation_id": str(M_INST), "policies": [DEPLOY_001]})).status_code == 404
+    async with app.state.pool.acquire() as conn:
+        await conn.execute("UPDATE sdk_credentials SET revoked_at = now() WHERE customer_org_id=$1", MERIDIAN)
+    async with sdk_client(app) as s:
+        assert (await s.post("/api/v1/ingest/events", json={"events": [event("state.transition", ex)]})).status_code == 401
+
+
+async def test_row_level_security_blocks_unscoped_queries(app):
+    from r2m_platform.auth import load_actor
+    await make_trace(app)
+    async with app.state.pool.acquire() as conn:
+        assert await conn.fetchval("SELECT current_user") == "r2m_app"
+        # A query that "forgets" its tenant filter sees nothing without a scope...
+        assert await conn.fetchval("SELECT count(*) FROM executions") == 0
+        assert await conn.fetchval("SELECT count(*) FROM simulation_services") == 0
+        # ...and only its own tenant's rows with one.
+        await load_actor(conn, uid("user", "security@northwind.demo"))
+        assert await conn.fetchval("SELECT count(*) FROM executions") == 0
+        assert await conn.fetchval("SELECT count(*) FROM simulation_services") == 1
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):  # can't write into another tenant either
+            await conn.execute("INSERT INTO incidents(installation_id, severity, category, description) "
+                               "VALUES ($1, 'low', 'x', 'x')", M_INST)
+        await load_actor(conn, uid("user", "ops@meridian.demo"))
+        assert await conn.fetchval("SELECT count(*) FROM executions") == 1
+        await load_actor(conn, uid("user", "release@atlas.demo"))  # vendor: both linked customers' simulations
+        assert await conn.fetchval("SELECT count(*) FROM simulation_services") == 2
+
+
+async def test_csrf_header_and_rate_limits(app):
+    from r2m_platform.guards import RateLimiter
+    ops = await login(app, "ops@meridian.demo")
+    del ops.headers["x-r2m-csrf"]
+    r = await ops.post("/api/v1/demo/agent/scenarios/healthy/reset")
+    assert (r.status_code, r.json()["code"]) == (403, "csrf_required")
+    assert (await ops.get("/api/v1/me")).status_code == 200  # reads don't need it
+    async with sdk_client(app) as s:  # bearer-token SDK calls are exempt
+        assert (await s.post("/api/v1/ingest/events", json={"events": [event("execution.started", uuid.uuid4())]})).status_code == 202
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=CSRF) as c:
+        codes = [(await c.post("/api/v1/demo/session", json={"email": "nobody@x.test"})).status_code for _ in range(21)]
+    assert codes[:19] == [401] * 19 and set(codes[19:]) == {429}  # 20/min per IP, incl. the login above
+
+    now = [0.0]
+    limiter = RateLimiter(clock=lambda: now[0])
+    hits = [limiter.hit("k", 2) for _ in range(3)]
+    assert hits[:2] == [0, 0] and hits[2] > 0
+    now[0] = 61.0
+    assert limiter.hit("k", 2) == 0  # next window

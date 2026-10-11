@@ -7,10 +7,12 @@ action and raised as a critical incident (the scenario-4 bypass signal).
 
 Methods are synchronous: the agent runs in a worker thread and these bridge into the server event loop.
 """
+import contextlib
 from uuid import UUID
 
 import anyio.from_thread
 
+from ..database import Scope, apply_scope
 from .authorization import claim_grant
 from .evidence_builder import record_evidence
 from .incident_detector import open_incident
@@ -68,6 +70,13 @@ class SimulationWorld:
     def __init__(self, pool, customer_org_id: UUID, installation_id: UUID):
         self._pool, self.customer_org_id, self.installation_id = pool, customer_org_id, installation_id
 
+    @contextlib.asynccontextmanager
+    async def _conn(self):
+        """A connection whose row-level-security scope is exactly this installation and its customer."""
+        async with self._pool.acquire() as conn:
+            await apply_scope(conn, Scope((self.installation_id,), (self.customer_org_id,)))
+            yield conn
+
     # ---- sync API for the agent (call from the worker thread only) ----
     def get_service(self, service_key: str = SERVICE_KEY) -> dict:
         return anyio.from_thread.run(self._get_service, service_key)
@@ -82,13 +91,13 @@ class SimulationWorld:
 
     # ---- async implementations ----
     async def _get_service(self, service_key):
-        async with self._pool.acquire() as conn:
+        async with self._conn() as conn:
             row = await conn.fetchrow("SELECT * FROM simulation_services WHERE customer_org_id=$1 AND service_key=$2",
                                       self.customer_org_id, service_key)
         return {"service_key": service_key, **_state(row), "last_transition_at": row["last_transition_at"].isoformat()} if row else None
 
     async def _history(self, service_key):
-        async with self._pool.acquire() as conn:
+        async with self._conn() as conn:
             rows = await conn.fetch(
                 """SELECT sa.kind, sa.before_state, sa.after_state, sa.authorized, sa.created_at FROM simulation_actions sa
                    JOIN simulation_services s ON s.id = sa.service_id WHERE s.customer_org_id=$1 AND s.service_key=$2
@@ -99,7 +108,7 @@ class SimulationWorld:
         unknown = set(changes) - set(STATE_FIELDS)
         if unknown:
             raise ValueError(f"unsupported state fields: {sorted(unknown)}")
-        async with self._pool.acquire() as conn, conn.transaction():
+        async with self._conn() as conn, conn.transaction():
             svc = await conn.fetchrow(
                 "SELECT * FROM simulation_services WHERE customer_org_id=$1 AND service_key=$2 FOR UPDATE",
                 self.customer_org_id, service_key)

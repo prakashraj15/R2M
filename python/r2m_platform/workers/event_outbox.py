@@ -7,6 +7,7 @@ import asyncio
 import logging
 
 from ..config import get_settings
+from ..database import BYPASS, apply_scope
 
 log = logging.getLogger("r2m.outbox")
 MAX_ATTEMPTS = 8
@@ -42,7 +43,13 @@ async def drain_once(pool, batch_size: int = 50) -> int:
     mod = adapter()
     if mod is None:
         return 0
-    async with pool.acquire() as conn, conn.transaction():
+    async with pool.acquire() as conn:
+        await apply_scope(conn, BYPASS)  # platform-internal: drains every tenant's outbox
+        return await _drain(conn, mod, batch_size)
+
+
+async def _drain(conn, mod, batch_size: int) -> int:
+    async with conn.transaction():
         rows = await conn.fetch(
             """SELECT id, payload, attempts FROM integration_outbox
                WHERE state IN ('pending','failed') AND next_attempt_at <= now()

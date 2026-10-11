@@ -2,8 +2,6 @@
 
 Messages: "rollback" | "resume <action_id> <execution_id>" | "bypass" (unguarded mutation, the faulty-build path).
 """
-import os
-
 from r2m import ApprovalRequired, PolicyDenied, PolicyResult, R2MClient, current_execution, policy, resume_action
 
 
@@ -21,7 +19,7 @@ ROLLBACK = {"deployment_version": "v2.0", "previous_version": "v2.1", "error_rat
 
 def handle_message(message: str, scenario: str, context: dict) -> dict:
     world = context["world"]
-    client = R2MClient(token=os.environ["SDK_INGEST_TOKEN"], agent_slug="opspilot",
+    client = R2MClient(token=context["sdk_token"], agent_slug="opspilot",
                        vendor_org_id=context["vendor_org_id"], customer_org_id=context["customer_org_id"],
                        environment=context["environment"], base_url=context["api_url"], background=False)
     reg = client.register_agent(

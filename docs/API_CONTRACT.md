@@ -14,7 +14,9 @@ Base path `/api/v1`. The browser reaches it through the Next.js `/api/*` proxy o
 
 | Code | HTTP | Meaning |
 |---|---|---|
-| `unauthenticated` | 401 | no/invalid demo session cookie, or bad SDK bearer token |
+| `unauthenticated` | 401 | no/invalid demo session cookie, or invalid/revoked SDK token |
+| `csrf_required` | 403 | cookie-authenticated write without `X-R2M-CSRF: 1` |
+| `rate_limited` | 429 | too many requests; honour `Retry-After` (limits in `SECURITY_MODEL.md`) |
 | `tenant_scope_invalid` | 403 | SDK registration for a vendor/customer pair that isn't actively linked |
 | `forbidden` | 403 | in scope, but the role lacks the permission |
 | `not_found` | 404 | missing **or outside your tenant scope** |
@@ -28,7 +30,8 @@ Base path `/api/v1`. The browser reaches it through the Next.js `/api/*` proxy o
 ## Authentication
 
 - **Browser:** `POST /demo/session {"email"}` sets an HMAC-signed `r2m_session` cookie (`HttpOnly`, `SameSite=Lax`, 8 h). Only seeded `is_demo` users are accepted. **This is demo auth, not production auth.**
-- **SDK / scripts:** `Authorization: Bearer $SDK_INGEST_TOKEN`. This is accepted only on `POST /agents`, `/ingest/events`, `/actions/*`, `/agents/{id}/policies/register` and `POST /agents/{id}/evaluations`.
+- **CSRF:** every browser write, login included, must send the header **`X-R2M-CSRF: 1`**. GETs don't need it.
+- **SDK / scripts:** `Authorization: Bearer <per-customer SDK token>`, scoped to one vendor+customer pair. Issue one with `python scripts/sdk_token.py issue --vendor <slug> --customer <slug> --label <name>` (or `list`, `revoke <id>`). The demo route passes the agent its own token as `context["sdk_token"]`. This is accepted only on `POST /agents`, `/ingest/events`, `/actions/*`, `/agents/{id}/policies/register` and `POST /agents/{id}/evaluations`.
 
 Seeded identities (`scripts/seed_demo.py`):
 
@@ -100,7 +103,7 @@ The backend implements that contract. `python/tests/test_sdk_e2e.py` drives it w
 | Result `executed` | Other error codes besides `grant_already_consumed`: `grant_invalid` (wrong grant or nonce), `grant_expired`, `not_authorized`. A later decision never overwrites an action that already executed |
 | Ingest | Only `heartbeat` may have `execution_id: null`; other events without one are rejected as `execution_required`. A span `attributes.component` (or `component_key`) that matches a topology `component_key` feeds node metrics and freshness |
 
-Grant key: `R2M_GRANT_SIGNING_KEY`, falling back to `SDK_INGEST_TOKEN`. TTL is 60 s.
+Grant key: the calling agent's own SDK token, which is what `GrantVerifier(grant_key or token)` uses by default, so the SDK needs no extra config. If `R2M_GRANT_SIGNING_KEY` is set, every agent must be given that key too. TTL is 60 s.
 
 ### `POST /agents/{agentId}/evaluations` (used by `scripts/run_evals.py`, not part of the SDK contract)
 
@@ -119,7 +122,7 @@ The response is `{run_id, build_id, status, summary}`. A run fails if any mandat
 `POST /demo/agent/message` calls `mock_agent.agent.handle_message(message: str, scenario: str, context: dict) -> dict`.
 
 - **Threading.** It runs in a worker thread. A sync function is called directly; a coroutine function is run with `asyncio.run` in that thread. Either way, the SDK's loopback calls to `context["api_url"]` cannot deadlock the server.
-- **Context.** `context` holds `world`, `agent_id`, `installation_id`, `deployment_id`, `build_version` (the currently deployed build), `customer_org_id`, `vendor_org_id`, `environment` (`production`), `api_url`, `request_id`, `actor{user_id,email,roles}`. Build `R2MClient` from these, plus `SDK_INGEST_TOKEN` from the environment. The client's own `register_agent` returns the deployment id for *its* build.
+- **Context.** `context` holds `world`, `sdk_token`, `agent_id`, `installation_id`, `deployment_id`, `build_version` (the currently deployed build), `customer_org_id`, `vendor_org_id`, `environment` (`production`), `api_url`, `request_id`, `actor{user_id,email,roles}`. Build `R2MClient(token=context["sdk_token"], ...)` from these. The client's own `register_agent` returns the deployment id for *its* build.
 - **Return value.** Return something JSON-able, e.g. `{reply, execution_id, trace_id, decision, action_id, approval_id, state}`. Secret-looking keys are redacted before the browser sees them.
 
 `context["world"]` (`SimulationWorld`, synchronous):

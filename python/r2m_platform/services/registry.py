@@ -6,9 +6,11 @@ from . import metrics_rollup
 from .evidence_builder import audit
 
 
-async def register_from_sdk(conn, body) -> dict:
+async def register_from_sdk(conn, body, principal) -> dict:
     """SDK_CONTRACT §1. Idempotent upserts. A newly seen build gets a *proposed* deployment: only the release
     gate (evaluate + deploy) can make it deployed, so registering code never bypasses evaluation or approval."""
+    if (body.vendor_org_id, body.customer_org_id) != (principal.vendor_org_id, principal.customer_org_id):
+        raise ApiError(403, "tenant_scope_invalid", "SDK token is not scoped to this vendor/customer pair")
     linked = await conn.fetchval(
         """SELECT EXISTS(SELECT 1 FROM vendor_customer_links l JOIN organizations v ON v.id = l.vendor_org_id
            JOIN organizations c ON c.id = l.customer_org_id WHERE l.vendor_org_id=$1 AND l.customer_org_id=$2
@@ -17,6 +19,9 @@ async def register_from_sdk(conn, body) -> dict:
         raise ApiError(403, "tenant_scope_invalid", "vendor is not actively linked to this customer")
     b = body.build
     async with conn.transaction():
+        # Creating an installation the caller can't see yet: pair validated above, so bypass RLS for this
+        # transaction only (set_config local=true reverts at commit/rollback).
+        await conn.execute("SELECT set_config('r2m.bypass', 'on', true)")
         agent_id = await conn.fetchval(
             """INSERT INTO agents(vendor_org_id, slug, name, description, sdk_version) VALUES ($1,$2,$3,$4,$5)
                ON CONFLICT (vendor_org_id, slug) DO UPDATE SET name=EXCLUDED.name,

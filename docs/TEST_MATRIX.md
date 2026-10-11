@@ -49,3 +49,6 @@ This maps the acceptance criteria in DEVELOPER_SPEC §12 to the checks that prov
 | Cross-installation topology edge; audit/evidence UPDATE or DELETE | `test_database_invariants` |
 | Replayed resume must not rewrite an executed action's outcome | e2e `replay` step |
 | Keewano down (send / query) → retry, then dead-letter; query `failed` | `test_outbox_retries_then_sends_and_dead_letters` |
+| Per-customer SDK token used on another customer's data (ingest, authorize, result, policy register); revoked or forged token | `test_sdk_tokens_are_customer_scoped_and_revocable`, `test_requires_session_and_sdk_token` |
+| Row-level security: unscoped query sees 0 rows; cross-tenant INSERT refused; vendor sees only linked customers | `test_row_level_security_blocks_unscoped_queries` (also verified on Aiven) |
+| CSRF header required on cookie writes, SDK exempt; login flood → 429; rate-limit windows | `test_csrf_header_and_rate_limits`, smoke test |

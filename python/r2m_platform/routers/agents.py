@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from ..auth import Actor, agent_installations, scoped_installations
+from ..auth import Actor, SdkPrincipal, agent_installations, scoped_installations
 from ..dependencies import actor, db, sdk
 from ..schemas import SdkAgentIn
 from ..services import metrics_rollup, registry
@@ -16,10 +16,10 @@ async def list_agents(a: Actor = Depends(actor), conn=Depends(db)):
     return {"agents": await registry.list_agents(conn, await scoped_installations(conn, a))}
 
 
-@router.post("/agents", dependencies=[Depends(sdk)])
-async def register_agent(body: SdkAgentIn, conn=Depends(db)):
+@router.post("/agents")
+async def register_agent(body: SdkAgentIn, p: SdkPrincipal = Depends(sdk), conn=Depends(db)):
     """SDK registration (agent, installation, build, proposed deployment, topology). Bearer token only."""
-    return await registry.register_from_sdk(conn, body)
+    return await registry.register_from_sdk(conn, body, p)
 
 
 @router.get("/agents/{agent_id}/topology")

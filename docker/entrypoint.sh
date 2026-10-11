@@ -4,6 +4,9 @@
 set -uo pipefail
 cd /app
 
+# Idempotent, advisory-locked. The API needs the r2m_app role and RLS policies from the migrations.
+python scripts/init_db.py || exit 1
+
 python -m uvicorn r2m_platform.main:app --host 127.0.0.1 --port 8000 --no-server-header &
 API=$!
 HOSTNAME=0.0.0.0 PORT=3000 node /app/web/server.js &

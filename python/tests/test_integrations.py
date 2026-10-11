@@ -5,6 +5,7 @@ import uuid
 
 import anyio.to_thread
 import pytest
+from conftest import bypass
 from test_platform import AGENT, M_INST, MERIDIAN, anyio_backend, app, event, login, sdk_client  # noqa: F401
 
 from r2m_platform.config import get_settings
@@ -42,6 +43,7 @@ def keewano(monkeypatch):
 
 async def _outbox(app):
     async with app.state.pool.acquire() as c:
+        await bypass(c)
         return [dict(r) for r in await c.fetch("SELECT * FROM integration_outbox ORDER BY next_attempt_at")]
 
 
@@ -65,6 +67,7 @@ async def test_outbox_retries_then_sends_and_dead_letters(app, keewano):
 
     keewano.fail = False
     async with app.state.pool.acquire() as c:
+        await bypass(c)
         await c.execute("UPDATE integration_outbox SET next_attempt_at = now()")
     assert await event_outbox.drain_once(app.state.pool) == 1
     assert (await _outbox(app))[0]["state"] == "sent" and keewano.sent == [{"event_id": 2002, "value": "OBSERVE->DIAGNOSE"}]
@@ -72,6 +75,7 @@ async def test_outbox_retries_then_sends_and_dead_letters(app, keewano):
     async with sdk_client(app) as s:
         await s.post("/api/v1/ingest/events", json={"events": [event("state.transition", ex, at=2, name="DIAGNOSE->PROPOSE")]})
     async with app.state.pool.acquire() as c:
+        await bypass(c)
         await c.execute(f"UPDATE integration_outbox SET attempts = {event_outbox.MAX_ATTEMPTS - 1} WHERE state='pending'")
     keewano.fail = True
     await event_outbox.drain_once(app.state.pool)

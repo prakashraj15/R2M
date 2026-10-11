@@ -5,9 +5,9 @@ R2M is an AI governance, runtime-control, evidence, evaluation, cost and observa
 ## One-command run (Docker)
 
 ```bash
-cp .env.example .env            # fill DATABASE_URL (Aiven), SESSION_SIGNING_KEY, SDK_INGEST_TOKEN
+cp .env.example .env            # fill DATABASE_URL (Aiven), SESSION_SIGNING_KEY, SDK_TOKEN_SECRET
 # Aiven console → service → CA certificate → save as secrets/aiven-ca.pem
-docker compose up -d --build && docker compose exec r2m sh -c "python scripts/init_db.py && python scripts/seed_demo.py"
+docker compose up -d --build && docker compose exec r2m python scripts/seed_demo.py   # migrations run on start
 ```
 
 Open http://localhost:3000. Pick a demo identity: `dev@atlas.demo`, `release@atlas.demo`, `security@meridian.demo` or `ops@meridian.demo`.
