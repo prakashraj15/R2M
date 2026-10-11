@@ -22,7 +22,7 @@ def client():
 def call(opener, base, method, path, body=None, headers=None):
     req = urllib.request.Request(base + "/api/v1" + path, method=method,
                                  data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"content-type": "application/json", **(headers or {})})
+                                 headers={"content-type": "application/json", "x-r2m-csrf": "1", **(headers or {})})
     try:
         with opener.open(req, timeout=10) as r:
             return r.status, json.loads(r.read() or b"{}")
@@ -47,6 +47,10 @@ def main():
     check("ingest requires SDK token", call(anon, base, "POST", "/ingest/events", {"events": []})[0] == 401)
     check("authorize rejects wrong token",
           call(anon, base, "POST", "/actions/authorize", {}, {"authorization": "Bearer nope"})[0] == 401)
+    check("write without CSRF header refused",
+          call(anon, base, "POST", "/demo/session", {"email": "ops@meridian.demo"}, {"x-r2m-csrf": ""})[0] == 403)
+    check("forged SDK token refused",
+          call(anon, base, "POST", "/ingest/events", {"events": []}, {"authorization": "Bearer r2m_sdk_" + "0" * 32 + "_" + "f" * 64})[0] == 401)
     check("non-allowlisted identity refused", call(anon, base, "POST", "/demo/session", {"email": "x@evil.test"})[0] == 401)
 
     meridian = client()

@@ -1,11 +1,15 @@
-"""Injectable DB connection, settings, browser actor and SDK token auth."""
-import hmac
+"""Injectable DB connection, settings, browser actor and SDK credential auth.
+
+Both auth dependencies apply the caller's row-level-security scope to the request connection and publish it in
+`current_scope` for any further connections the request borrows.
+"""
 from typing import AsyncIterator
 
 from fastapi import Depends, Request
 
-from .auth import SESSION_COOKIE, Actor, load_actor, verify_session
+from .auth import SESSION_COOKIE, Actor, SdkPrincipal, load_actor, load_sdk_principal, parse_sdk_token, verify_session
 from .config import Settings, get_settings
+from .database import current_scope
 from .errors import ApiError
 
 
@@ -24,11 +28,15 @@ async def actor(request: Request, conn=Depends(db), cfg: Settings = Depends(sett
     found = await load_actor(conn, user_id) if user_id else None
     if not found:
         raise ApiError(401, "unauthenticated", "sign in with a demo identity")
-    return found
+    current_scope.set(found[1])
+    return found[0]
 
 
-def sdk(request: Request, cfg: Settings = Depends(settings)) -> None:
-    header = request.headers.get("authorization", "")
-    scheme, _, token = header.partition(" ")
-    if scheme.lower() != "bearer" or not hmac.compare_digest(token.encode(), cfg.sdk_ingest_token.encode()):
-        raise ApiError(401, "unauthenticated", "invalid SDK bearer token")
+async def sdk(request: Request, conn=Depends(db), cfg: Settings = Depends(settings)) -> SdkPrincipal:
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    credential_id = parse_sdk_token(cfg.sdk_token_secret, token) if scheme.lower() == "bearer" else None
+    found = await load_sdk_principal(conn, credential_id, token) if credential_id else None
+    if not found:
+        raise ApiError(401, "unauthenticated", "invalid or revoked SDK token")
+    current_scope.set(found[1])
+    return found[0]

@@ -2,6 +2,7 @@
 
 ponytail: computed per request over bounded ranges; add workers/rollups.py materialization when demo data volume makes this slow.
 """
+import asyncio
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -25,33 +26,40 @@ def health(last_seen: datetime | None, calls: int, errors: int, critical_open: i
     return "healthy"
 
 
-async def summary(conn, installation_ids: list[UUID], start: datetime) -> dict:
-    ex = await conn.fetchrow(
+async def _q(pool, method: str, sql: str, *args):
+    """One query on its own pooled connection, so independent dashboard queries overlap their round trips."""
+    async with pool.acquire() as conn:
+        return await getattr(conn, method)(sql, *args)
+
+
+async def summary(pool, installation_ids: list[UUID], start: datetime) -> dict:
+    ex = _q(pool, "fetchrow",
         """SELECT count(*) FILTER (WHERE e.status='completed') AS ok,
                   count(*) FILTER (WHERE e.status IN ('completed','failed','cancelled')) AS finished,
                   count(*) AS total
            FROM executions e JOIN deployments d ON d.id = e.deployment_id
            WHERE d.installation_id = ANY($1::uuid[]) AND e.started_at >= $2""", installation_ids, start)
-    findings = await conn.fetchval(
+    findings = _q(pool, "fetchval",
         """SELECT count(*) FROM incidents WHERE installation_id = ANY($1::uuid[])
            AND status <> 'resolved' AND severity IN ('high','critical')""", installation_ids)
-    cov = await conn.fetchrow(
+    cov = _q(pool, "fetchrow",
         """SELECT count(*) FILTER (WHERE sa.authorized) AS gated, count(*) AS observed
            FROM simulation_actions sa JOIN simulation_services s ON s.id = sa.service_id
            WHERE s.customer_org_id IN (SELECT customer_org_id FROM agent_installations WHERE id = ANY($1::uuid[]))
              AND sa.created_at >= $2""", installation_ids, start)
-    costs = await conn.fetch(
+    costs = _q(pool, "fetch",
         """SELECT u.cost_source, sum(u.amount_usd) AS usd, sum(u.input_tokens) AS input_tokens, sum(u.output_tokens) AS output_tokens
            FROM usage_records u JOIN executions e ON e.id = u.execution_id JOIN deployments d ON d.id = e.deployment_id
            WHERE d.installation_id = ANY($1::uuid[]) AND u.occurred_at >= $2 GROUP BY u.cost_source""", installation_ids, start)
-    p95 = await conn.fetchval(
+    p95 = _q(pool, "fetchval",
         """SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY s.duration_ms) FROM spans s
            JOIN executions e ON e.id = s.execution_id JOIN deployments d ON d.id = e.deployment_id
            WHERE d.installation_id = ANY($1::uuid[]) AND s.kind='tool' AND s.duration_ms IS NOT NULL AND s.started_at >= $2""",
         installation_ids, start)
-    deployed = await conn.fetchval(
+    deployed = _q(pool, "fetchval",
         "SELECT count(DISTINCT installation_id) FROM deployments WHERE installation_id = ANY($1::uuid[]) AND status='deployed'",
         installation_ids)
+    ex, findings, cov, costs, p95, deployed = await asyncio.gather(ex, findings, cov, costs, p95, deployed)
     return {
         "deployed_agents": deployed,
         "run_success": {"value": round(ex["ok"] / ex["finished"], 4) if ex["finished"] else None,
@@ -73,18 +81,19 @@ async def summary(conn, installation_ids: list[UUID], start: datetime) -> dict:
     }
 
 
-async def series(conn, installation_ids: list[UUID], start: datetime, bucket: str) -> list[dict]:
-    rows = await conn.fetch(
+async def series(pool, installation_ids: list[UUID], start: datetime, bucket: str) -> list[dict]:
+    rows = _q(pool, "fetch",
         """SELECT date_trunc($3, u.occurred_at) AS bucket, u.cost_source, sum(u.amount_usd) AS usd
            FROM usage_records u JOIN executions e ON e.id = u.execution_id JOIN deployments d ON d.id = e.deployment_id
            WHERE d.installation_id = ANY($1::uuid[]) AND u.occurred_at >= $2 GROUP BY 1, 2 ORDER BY 1""",
         installation_ids, start, bucket)
-    lat = await conn.fetch(
+    lat = _q(pool, "fetch",
         """SELECT date_trunc($3, s.started_at) AS bucket, percentile_cont(0.95) WITHIN GROUP (ORDER BY s.duration_ms) AS p95,
                   count(*) AS calls, count(*) FILTER (WHERE s.status IN ('error','failed')) AS errors
            FROM spans s JOIN executions e ON e.id = s.execution_id JOIN deployments d ON d.id = e.deployment_id
            WHERE d.installation_id = ANY($1::uuid[]) AND s.started_at >= $2 AND s.duration_ms IS NOT NULL
            GROUP BY 1 ORDER BY 1""", installation_ids, start, bucket)
+    rows, lat = await asyncio.gather(rows, lat)
     return {"cost": [{"bucket": r["bucket"], "cost_source": r["cost_source"], "usd": float(r["usd"])} for r in rows],
             "latency": [{"bucket": r["bucket"], "p95_ms": r["p95"], "calls": r["calls"], "errors": r["errors"]} for r in lat]}
 

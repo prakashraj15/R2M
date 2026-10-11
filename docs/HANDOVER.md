@@ -12,6 +12,7 @@ The security behaviour is in `docs/SECURITY_MODEL.md`.
 uv venv -p 3.12 .venv && . .venv/bin/activate
 uv pip install -e python/r2m_sdk -e "python[test]"
 cp .env.example .env        # ask Mohanaprasad for the shared Aiven values over a private channel, never in chat/git
+                            # (SDK_TOKEN_SECRET is server-only; agents get per-customer tokens, see below)
 # CA cert: Aiven console → service → CA certificate → save as secrets/aiven-ca.pem
 set -a; . ./.env; set +a
 python scripts/init_db.py && python scripts/seed_demo.py        # idempotent
@@ -46,7 +47,7 @@ Demo identities (`GET /api/v1/demo/identities`):
   - `output: "standalone"`
   - rewrites `/api/:path*` → `http://127.0.0.1:8000/api/:path*`
 - `web/package-lock.json` must exist (the image runs `npm ci`), and so must a `web/public/` folder (the image copies it).
-- **Browser calls are relative.** Call `/api/v1/...` and let the cookie ride along. The session cookie is `HttpOnly`, so you can't read it. Call `GET /api/v1/me` instead.
+- **Browser calls are relative.** Call `/api/v1/...` and let the cookie ride along. **Every POST, PUT, PATCH or DELETE (login included) must send the header `X-R2M-CSRF: 1`**; otherwise it gets 403 `csrf_required`. Handle 429 `rate_limited` by honouring `Retry-After`. The session cookie is `HttpOnly`, so you can't read it. Call `GET /api/v1/me` instead.
 - **Server-side fetches** go to `process.env.R2M_INTERNAL_API_URL` and must forward the incoming `cookie` header.
 - No secrets in the frontend. The only allowed public variable is `NEXT_PUBLIC_APP_LABEL`.
 
@@ -69,7 +70,7 @@ Demo identities (`GET /api/v1/demo/identities`):
 | Release (new) | `POST /agents/{id}/releases/evaluate {installation_id, build_version, artifact_digest}` → checks, then `POST /agents/{id}/deployments/{depId}/deploy` (release manager). `GET /agents/{id}/deployments` |
 | Traces | `GET /agents/{id}/traces?cursor=` and `GET /traces/{traceId}` (spans with `depth`, `started_at` and `duration_ms` for the waterfall; events, actions, decisions, grants, approvals, usage) |
 | Costs / metrics | `GET /agents/{id}/metrics?range=` (`summary` plus `series.cost[]` / `series.latency[]`) |
-| Security | `GET /agents/{id}/incidents` |
+| Security | `GET /agents/{id}/incidents` and `PATCH /incidents/{id} {status, note}` (resolve or investigate; feeds "unresolved findings") |
 | Evidence | `GET /agents/{id}/evidence` (`integrity_ok` per item) and `GET /agents/{id}/evidence/export` (customer security / release manager) |
 | Integrations | `GET/PUT /integrations/keewano`, `POST /integrations/keewano/query` |
 | `/demo/agent` | `GET /demo/agent/state`, `POST /demo/agent/message {message, scenario}`, `POST /demo/agent/scenarios/{id}/reset` |
@@ -98,8 +99,11 @@ It is **deliberately stricter than `FakePlatform`** in these places:
 3. **One grant per approval.** A replayed resume gets `APPROVAL_CONSUMED`; expired approvals get `APPROVAL_EXPIRED`.
 4. **Tampered policies are refused.** Same `(id, version)` with a different hash returns `hash_matches: false`, `status: "rejected"` and `revision_id: null`, and opens a high-severity incident.
 5. **Only heartbeats may omit the execution.** Any other event without an `execution_id` is rejected as `execution_required`.
+6. **SDK tokens are per customer.** Each one is scoped to a vendor+customer pair, so there's no shared `SDK_INGEST_TOKEN` on the server any more; agents pass their own token. A token used for another customer's data gets `tenant_scope_invalid`, 404 or `scope_mismatch`.
 
-Please note these five in `SDK_CONTRACT.md`.
+   Grants are signed with the calling token, which matches the SDK's default `GrantVerifier(grant_key or token)`, so `R2M_GRANT_SIGNING_KEY` can stay unset.
+
+Please note these six in `SDK_CONTRACT.md`.
 
 ### `mock_agent` contract
 
@@ -110,7 +114,7 @@ def handle_message(message: str, scenario: str, context: dict) -> dict: ...   # 
 ```
 
 - **Threading:** it runs in a worker thread, so a blocking `httpx` call to `context["api_url"]` is safe.
-- **Building the client:** use `R2MClient(token=os.environ["SDK_INGEST_TOKEN"], agent_slug="opspilot", vendor_org_id=context["vendor_org_id"], customer_org_id=context["customer_org_id"], environment=context["environment"], base_url=context["api_url"])`. The environment is `"production"`. Call `client.close()` (or `flush()`) before returning.
+- **Building the client:** use `R2MClient(token=context["sdk_token"], agent_slug="opspilot", vendor_org_id=context["vendor_org_id"], customer_org_id=context["customer_org_id"], environment=context["environment"], base_url=context["api_url"])`. The environment is `"production"`. Call `client.close()` (or `flush()`) before returning.
 - **Mutations go through the world, inside the guarded tool:**
   ```python
   @client.tool("rollback_deployment", risk="high", policies=[DEPLOY_001])
@@ -129,7 +133,7 @@ def handle_message(message: str, scenario: str, context: dict) -> dict: ...   # 
 
 ### `scripts/run_evals.py`
 
-- Post each suite to `POST /api/v1/agents/{agentId}/evaluations` with the SDK bearer token. The body shape is in `API_CONTRACT.md`.
+- Post each suite to `POST /api/v1/agents/{agentId}/evaluations` with a per-customer SDK token. Issue it once with `python scripts/sdk_token.py issue --vendor atlas-applied-ai --customer meridian-financial --label run-evals` and pass it in via the environment. The token must belong to the agent's vendor. The body shape is in `API_CONTRACT.md`.
 - Use **the same `artifact_digest`** that the agent passes to `register_agent`; the release gate compares them.
 - The faulty build must fail a `mandatory` case, so its release is `blocked`.
 - The OpsPilot agent id is the deterministic `uuid5(uuid5(NAMESPACE_URL, "https://r2m.demo/seed"), "agent:opspilot")`, or take `agent_id` from the `register_agent` response.

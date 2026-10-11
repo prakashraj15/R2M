@@ -33,11 +33,11 @@ def sign_grant(grant: dict, key: str) -> str:
     return hmac.new(key.encode(), payload, hashlib.sha256).hexdigest()
 
 
-async def authorize(conn, req, settings) -> dict:
+async def authorize(conn, req, settings, principal) -> dict:
     dep = await conn.fetchrow(
         """SELECT d.id, d.status, d.installation_id, i.customer_org_id, i.agent_id, i.environment
            FROM deployments d JOIN agent_installations i ON i.id = d.installation_id WHERE d.id=$1""", req.deployment_id)
-    if (not dep or dep["installation_id"] != req.installation_id or dep["agent_id"] != req.agent_id
+    if (not dep or req.customer_org_id != principal.customer_org_id or dep["installation_id"] != req.installation_id or dep["agent_id"] != req.agent_id
             or dep["customer_org_id"] != req.customer_org_id or dep["environment"] != req.environment):
         # Nothing can be persisted against an inconsistent scope.
         return _response("DENY", ["TENANT_SCOPE_INVALID"], None, None, [], None, None)
@@ -102,7 +102,9 @@ async def authorize(conn, req, settings) -> dict:
                      "policy_revision_ids": [str(r) for r in revision_ids], "tool": req.tool,
                      "arguments_hash": req.arguments_hash, "execution_id": str(req.execution_id),
                      "expires_at": expires.isoformat(), "nonce": nonce}
-            grant["signature"] = sign_grant(grant, settings.grant_signing_key)
+            # Unless a shared key is configured, sign with the caller's own token: exactly what the SDK
+            # verifies with by default (GrantVerifier(grant_key or token)).
+            grant["signature"] = sign_grant(grant, settings.grant_signing_key or principal.token)
 
         await record_evidence(conn, dep["installation_id"], "action_decision",
                               {"action_id": action_id, "decision": decision, "reason_codes": reasons, "tool": req.tool,
@@ -171,12 +173,12 @@ async def _evaluate(conn, req, dep, action_id: UUID, settings):
     return "ALLOW", ["HUMAN_APPROVED"], cited, approval
 
 
-async def record_result(conn, action_id: UUID, body) -> dict:
+async def record_result(conn, action_id: UUID, body, principal) -> dict:
     async with conn.transaction():
         action = await conn.fetchrow(
             """SELECT a.id, a.authorized_at, a.executed_at, a.execution_id, d.installation_id FROM tool_actions a
                JOIN executions e ON e.id = a.execution_id JOIN deployments d ON d.id = e.deployment_id
-               WHERE a.id=$1 FOR UPDATE OF a""", action_id)
+               WHERE a.id=$1 AND e.customer_org_id=$2 FOR UPDATE OF a""", action_id, principal.customer_org_id)
         if not action:
             raise ApiError(404, "action_not_found", "unknown action")
         if action["authorized_at"] is None:

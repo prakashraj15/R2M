@@ -11,21 +11,32 @@ This is demonstrable engineering, not SOC 2, ISO 27001 or a legal audit attestat
 - **Vendor-private fields are redacted for customers.** In trace payloads, customer viewers get attributes prefixed `prompt`, `completion`, `system_prompt` or `vendor_` redacted.
 - **Tests.** `python/tests/test_platform.py` runs positive and negative scope tests for every agent-scoped endpoint, plus cross-tenant direct-object tests and SDK cross-tenant attribution.
 
+## Row-level security (defence in depth)
+
+The application filters by scope, and Postgres enforces the same scope underneath (`db/migrations/0003_rls_and_sdk_credentials.sql`).
+
+- **Restricted role.** API connections switch to `r2m_app`: not the table owner, no `BYPASSRLS`, and no UPDATE or DELETE on `audit_events`/`evidence_items`. Every tenant table has a policy limiting rows to the caller's installations (or orgs) for both reads and writes.
+- **Scope is set per request in the same round trip.** Browser auth runs `r2m_apply_actor_scope`, SDK auth runs `r2m_apply_sdk_scope`, and the simulation runs at installation scope.
+- **Unscoped means empty.** A pooled connection without a scope sees **zero** tenant rows, and releasing a connection clears its scope.
+- **Bypass is narrow.** Only the outbox worker and SDK agent registration (a new installation, after the vendor/customer pair is validated) use the bypass flag. Migrations and seed scripts run as the owner.
+- **Tested.** `test_row_level_security_blocks_unscoped_queries` covers it, and it was verified on Aiven: an unscoped query sees 0 rows, and an audit UPDATE is denied.
+- **Limits.** RLS catches a query that forgets its tenant filter. It is **not** a defence against SQL injection, because the session can change its own settings. All SQL is parameterized.
+
 ## Authentication
 
 | Caller | Mechanism | Notes |
 |---|---|---|
 | Browser | HMAC-SHA256 signed cookie `r2m_session` (HttpOnly, SameSite=Lax, Secure on https, 8 h) | Only seeded `is_demo` users. Session holds the user id only; roles are reloaded from the DB on every request |
-| SDK / scripts | `Bearer SDK_INGEST_TOKEN`, constant-time compare | **Prototype limitation:** one global token. Production needs per-installation credentials over TLS. The server still checks that each event's deployment/agent/customer/vendor tuple is consistent |
+| SDK / scripts | Per-customer bearer token `r2m_sdk_<credential id>_<HMAC-SHA256(SDK_TOKEN_SECRET, id)>`, issued with `scripts/sdk_token.py` | Each token is scoped to one vendor+customer pair, can be revoked, and nothing secret is stored in the DB. Every SDK endpoint enforces the pair: agent registration, policy registration, authorize, result, ingest and evals. Another customer's data gets `tenant_scope_invalid`, 404 or `scope_mismatch` |
 
 ## Authorization (roles → permissions)
 
 | Role | Permissions |
 |---|---|
-| vendor_developer | register agents, submit policy revisions, Keewano query, demo |
+| vendor_developer | submit policy revisions, update incident status, Keewano query, demo |
 | vendor_release_manager | evaluate releases, deploy, export evidence, demo |
-| customer_security | decide approvals, export evidence, Keewano query/configure, demo |
-| customer_ops | read, demo |
+| customer_security | decide approvals, update incident status, export evidence, Keewano query/configure, demo |
+| customer_ops | read, update incident status, demo |
 
 Permissions are checked against the **owning** org of the record: the vendor org for releases and submissions, the customer org for approvals.
 
@@ -40,7 +51,7 @@ Permissions are checked against the **owning** org of the record: the vendor org
    - the strictest local verdict, which the server never relaxes
 
    Approval-required actions need a human approval of the **exact** action (tool, argument hash, execution). Each approval yields one grant.
-4. **Grants.** A grant is HMAC-SHA256 signed (`R2M_GRANT_SIGNING_KEY`, falling back to `SDK_INGEST_TOKEN`), and the SDK verifies it before running the tool. It is bound to org, deployment, execution, action, policy revisions, tool and argument hash, and expires in 60 s. Only `sha256(nonce)` is stored. A grant is used twice, each time atomically:
+4. **Grants.** A grant is HMAC-SHA256 signed with the calling agent's own per-customer token (or `R2M_GRANT_SIGNING_KEY` if set), so one customer's token can't mint grants that verify for another. The SDK verifies the grant before running the tool. It is bound to org, deployment, execution, action, policy revisions, tool and argument hash, and expires in 60 s. Only `sha256(nonce)` is stored. A grant is used twice, each time atomically:
    - **applied** (`applied_at`) once, at the simulated infrastructure
    - **consumed** (`consumed_at`) once, when the SDK reports the executed result; a replay gets 409 `grant_already_consumed`
 5. **Independent check at the boundary.** `SimulationWorld.apply_action` refuses any mutation without a live grant for the same execution and tool, and opens a critical incident. "Policy enforcement coverage" is the share of observed mutations that carried a grant. It is **observed** coverage: code paths that never reach the simulation boundary are invisible, and the UI must say so.
@@ -63,11 +74,29 @@ Permissions are checked against the **owning** org of the record: the vendor org
 - **Secrets come only from the environment**, and the config check fails at startup if they are missing or shorter than 32 characters. They are never logged, never returned (the health check returns no driver detail) and never sent to the frontend.
 - **Aiven is reached over TLS** with `verify-full`: CA verification plus hostname check. `DATABASE_SSL_MODE=disable` is refused unless the host is loopback, so there is no silent downgrade.
 - **One public port.** FastAPI binds `127.0.0.1:8000`, and only Next.js `:3000` is published, bound to `127.0.0.1` on the host by compose.
-- **Keewano credentials** stay server-side. `integration_configs` stores enablement only. Keewano output is labeled untrusted advisory data and never feeds `/actions/authorize`.
+- **Keewano credentials** stay server-side. `integration_configs` stores enablement only. Keewano output is labeled untrusted advisory data, is sanitized, and never feeds `/actions/authorize`.
+
+## Request guards
+
+- **CSRF.** Every cookie-authenticated write (POST, PUT, PATCH, DELETE), including login, must send `X-R2M-CSRF: 1`; otherwise it gets 403 `csrf_required`. A cross-site page can't add a custom header without a CORS preflight, and this API grants none. SDK calls with a bearer token are exempt. SameSite=Lax cookies are a second layer.
+- **Rate limits** use fixed one-minute windows and return 429 `rate_limited` with `Retry-After`:
+
+  | Scope | Limit per minute |
+  |---|---|
+  | Login, per IP | 60 |
+  | Keewano query, per caller | 10 |
+  | Demo agent message, per caller | 30 |
+  | Browser, per session | 600 |
+  | SDK, per token | 3000 |
+  | Any caller, per IP | 3000 |
+
+  `X-Forwarded-For` is **never trusted**. Next.js rewrites pass the client's own value through unchanged (verified in the container), and uvicorn runs with `--no-proxy-headers` so it can't rewrite the client address either. Behind the proxy, every browser therefore shares one IP: per-IP limits cap the whole proxy, while per-session and per-token limits are the per-user controls.
+
+  The counters live in process memory and use fixed windows, so a burst of up to twice the limit is possible across a window boundary. That's fine for this single-process API; a multi-replica deployment would need shared counters.
 
 ## Known gaps (prototype)
 
-- One shared SDK token instead of per-installation credentials. By default it is also the grant HMAC key; set `R2M_GRANT_SIGNING_KEY` to separate them.
-- No Postgres row-level security. Scoping is at the application layer, plus triggers for the invariants above.
-- No rate limiting or CSRF token. SameSite=Lax plus JSON-only bodies are the mitigation.
+- Demo authentication: any allowlisted identity can be selected without a password. It is labeled non-production.
+- SDK tokens travel over loopback HTTP inside the container. A deployment with a separate agent host needs TLS for that hop.
+- Rate-limit counters are per process and reset on restart.
 - Demo scenario reset is available to any in-scope demo role when `APP_ENV=demo`.

@@ -12,3 +12,8 @@ build/
 dist/
 *.egg-info/
 .DS_Store
+out/
+*.tsbuildinfo
+.env.*
+!.env.example
+*.log

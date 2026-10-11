@@ -93,7 +93,7 @@ def test_live_model_cannot_get_raw_logs_or_act_twice():
         "Restarted; still degraded.",
     )
     sb = llm.sandbox("degraded")
-    sb.say("fix it")
+    sb.say("restart payments-api")
     raw_result = json.loads(llm.requests[1]["messages"][-1]["content"])
     assert raw_result == {"error": "denied_by_r2m", "reasons": ["RAW_LOG_ACCESS_FORBIDDEN"]}
     assert len([a for a in sb.world.actions if a["authorized"]]) == 1
@@ -153,3 +153,80 @@ def test_live_fault_scenario_customer_only_has_gated_tools():
     sb = llm.sandbox("faulty", roles=("customer_ops",))
     out = sb.say("run the faulty build rollback")
     assert out["decision"] == "REQUIRE_APPROVAL" and not sb.world.unauthorized_attempts
+
+
+def test_history_is_dropped_when_the_world_changed():
+    llm = ScriptedOpenAI("Rolled back already.", "payments-api is degraded on v2.1.")
+    sb = llm.sandbox("approval")
+    sb.say("status?")
+    sb.world.services["payments-api"]["deployment_version"] = "v9.9"  # e.g. a scenario reset
+    sb.say("status again?")
+    roles = [m["role"] for m in llm.requests[1]["messages"]]
+    assert roles == ["system", "user"]  # the stale exchange was not replayed
+
+
+def test_history_kept_while_world_unchanged():
+    llm = ScriptedOpenAI("It is degraded.", "Still degraded.")
+    sb = llm.sandbox("degraded")
+    sb.say("status?")
+    sb.say("and now?")
+    assert [m["role"] for m in llm.requests[1]["messages"]] == ["system", "user", "assistant", "user"]
+
+
+def test_conversations_are_per_person_but_pending_approval_is_shared():
+    llm = ScriptedOpenAI(
+        [call("rollback_deployment", target_version="v2.0", incident_category="post_deploy_errors", rationale="r")],
+        "Needs approval.", "Hello Atlas dev.",
+    )
+    ops = llm.sandbox("approval", roles=("customer_ops",))
+    first = ops.say("Roll back payments-api to v2.0")
+    dev = Sandbox("approval", roles=("vendor_developer",), llm_mode="openai",
+                  openai_transport=httpx.MockTransport(llm), platform=ops.platform, world=ops.world)
+    ctx = dev.context()
+    ctx["actor"]["email"] = "dev@atlas.demo"
+    from mock_agent.agent import run_turn
+    client = dev.client()
+    try:
+        run_turn(client, "hi", "approval", ctx)
+    finally:
+        client.close()
+    sent = llm.requests[-1]["messages"]
+    assert [m["role"] for m in sent if m["role"] != "system"] == ["user"]  # ops' chat is not replayed
+    assert any("awaits approval" in m["content"] for m in sent if m["role"] == "system")  # pending is shared
+    assert first["decision"] == "REQUIRE_APPROVAL"
+
+
+def test_tool_error_is_reported_not_crashing_the_turn():
+    llm = ScriptedOpenAI(
+        [call("rollback_deployment", target_version="previous_release", incident_category="unknown", rationale="x")],
+        "The rollback failed: unknown release.",
+    )
+    sb = llm.sandbox("faulty", roles=("vendor_developer",))
+    out = sb.say("run the faulty build rollback")
+    assert out["decision"] == "FAILED" and out["reasons"] == ["TOOL_ERROR:ValueError"]
+    told = json.loads(llm.requests[1]["messages"][-1]["content"])
+    assert told["outcome"] == "failed" and told["changed"] is False
+    assert sb.world.get_service()["deployment_version"] == "v2.1"
+
+
+def test_open_ended_fix_consults_keewano_before_any_action():
+    llm = ScriptedOpenAI(
+        [call("restart_service", rationale="errors", incident_category="post_deploy_errors")],  # skips history
+        [call("rollback_deployment", target_version="v2.0", incident_category="post_deploy_errors",
+              rationale="history: rollback 35/38")],
+        "Rollback needs approval.",
+    )
+    sb = llm.sandbox("degraded", insights=FakeInsights(ROLLBACK_HISTORY))
+    out = sb.say("payments-api is throwing errors, fix it")
+    first_result = json.loads(llm.requests[1]["messages"][-1]["content"])
+    assert first_result["not_executed"] is True and first_result["supported"] is True
+    assert not sb.world.actions  # the restart never ran
+    assert out["proposal"]["tool"] == "rollback_deployment" and out["proposal"]["source"] == "keewano"
+    assert "OPTIONAL_KEEWANO_HISTORY" in out["steps"]
+
+
+def test_named_action_is_not_forced_through_history():
+    llm = ScriptedOpenAI([call("restart_service", rationale="asked", incident_category="unknown")], "Restarted.")
+    sb = llm.sandbox("degraded", insights=FakeInsights(ROLLBACK_HISTORY))
+    out = sb.say("restart payments-api")
+    assert out["decision"] == "ALLOW" and "OPTIONAL_KEEWANO_HISTORY" not in out["steps"]

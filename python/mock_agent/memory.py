@@ -16,20 +16,29 @@ if TYPE_CHECKING:
 
 COMPONENT = "conversation-memory"
 _STORE: dict[str, dict[str, Any]] = {}
-_HISTORY: dict[tuple[str, str], list[dict[str, str]]] = {}
+_HISTORY: dict[tuple[str, str, str], list[dict[str, str]]] = {}
+_FINGERPRINT: dict[tuple[str, str, str], str] = {}
 MAX_HISTORY_MESSAGES = 12
 _LOCK = threading.Lock()
 
 
 class ConversationMemory:
-    def __init__(self, client: "R2MClient", customer_org_id: str):
+    def __init__(self, client: "R2MClient", customer_org_id: str, actor: str | None = None):
         self._client = client
-        self._key = customer_org_id
+        self._key = customer_org_id  # pending approvals are shared within the customer org
+        self._actor = actor or "anonymous"  # conversations are per person
 
-    def peek(self) -> dict[str, Any] | None:
-        """Untraced lookup, for deciding whether to resume before any execution is open."""
+    def peek(self, world_fingerprint: str | None = None) -> dict[str, Any] | None:
+        """Untraced lookup, for deciding whether to resume before any execution is open.
+
+        A pending action saved under a different world state (e.g. before a scenario reset, which also
+        expires the approval server-side) is stale and is dropped. Approving does not change the world.
+        """
         with _LOCK:
             item = _STORE.get(self._key)
+            if item and world_fingerprint is not None and item.get("world_fingerprint") not in (None, world_fingerprint):
+                _STORE.pop(self._key, None)
+                item = None
         return dict(item) if item else None
 
     def pending(self) -> dict[str, Any] | None:
@@ -51,16 +60,28 @@ class ConversationMemory:
                 _STORE.pop(self._key, None)
 
 
-    def history(self, scenario: str) -> list[dict[str, str]]:
-        """Recent user/assistant text for the live model (already redacted when stored)."""
-        with _LOCK:
-            return list(_HISTORY.get((self._key, scenario), []))
+    def history(self, scenario: str, world_fingerprint: str | None = None) -> list[dict[str, str]]:
+        """Recent user/assistant text for the live model (already redacted when stored).
 
-    def append_history(self, scenario: str, user: str, assistant: str) -> None:
+        History is only valid for the world it describes: if the service changed since the last turn
+        (scenario reset, another user's action), the old conversation is dropped so the model can't
+        talk about a state that no longer exists.
+        """
         with _LOCK:
-            items = _HISTORY.setdefault((self._key, scenario), [])
+            key = (self._key, self._actor, scenario)
+            if world_fingerprint is not None and _FINGERPRINT.get(key) != world_fingerprint:
+                _HISTORY.pop(key, None)
+            return list(_HISTORY.get(key, []))
+
+    def append_history(self, scenario: str, user: str, assistant: str,
+                       world_fingerprint: str | None = None) -> None:
+        with _LOCK:
+            key = (self._key, self._actor, scenario)
+            items = _HISTORY.setdefault(key, [])
             items += [{"role": "user", "content": user}, {"role": "assistant", "content": assistant}]
             del items[:-MAX_HISTORY_MESSAGES]
+            if world_fingerprint is not None:
+                _FINGERPRINT[key] = world_fingerprint
 
 
 def reset_all() -> None:
@@ -68,3 +89,4 @@ def reset_all() -> None:
     with _LOCK:
         _STORE.clear()
         _HISTORY.clear()
+        _FINGERPRINT.clear()

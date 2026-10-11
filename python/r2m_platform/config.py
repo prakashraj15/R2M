@@ -18,8 +18,8 @@ class Settings:
     database_ssl_mode: str  # verify-full (default) | disable (loopback hosts only)
     database_ca_cert: str | None
     session_signing_key: str
-    sdk_ingest_token: str
-    grant_signing_key: str
+    sdk_token_secret: str  # derives per-customer SDK tokens; never given to agents
+    grant_signing_key: str | None  # None: each grant is signed with the caller's own SDK token
     internal_api_url: str
     keewano_enabled: bool
     session_ttl_seconds: int = 8 * 3600
@@ -45,9 +45,9 @@ def load_settings() -> Settings:
         database_ssl_mode=os.environ.get("DATABASE_SSL_MODE", "verify-full").strip(),
         database_ca_cert=os.environ.get("DATABASE_CA_CERT", "").strip() or None,
         session_signing_key=_required("SESSION_SIGNING_KEY"),
-        sdk_ingest_token=_required("SDK_INGEST_TOKEN"),
-        # SDK contract: grants are signed with R2M_GRANT_SIGNING_KEY, falling back to SDK_INGEST_TOKEN.
-        grant_signing_key=os.environ.get("R2M_GRANT_SIGNING_KEY", "").strip() or _required("SDK_INGEST_TOKEN"),
+        sdk_token_secret=_required("SDK_TOKEN_SECRET"),
+        # SDK contract: grants are verified with R2M_GRANT_SIGNING_KEY if set, else the agent's own token.
+        grant_signing_key=os.environ.get("R2M_GRANT_SIGNING_KEY", "").strip() or None,
         internal_api_url=_required("R2M_INTERNAL_API_URL"),
         keewano_enabled=os.environ.get("KEEWANO_ENABLED", "false").lower() == "true",
     )
@@ -57,9 +57,9 @@ def load_settings() -> Settings:
         raise ConfigError("DATABASE_SSL_MODE=disable is only allowed for a loopback database")
     if s.database_ca_cert and not os.path.isfile(s.database_ca_cert):
         raise ConfigError("DATABASE_CA_CERT does not point to a readable file")
-    for name, value in (("SESSION_SIGNING_KEY", s.session_signing_key), ("SDK_INGEST_TOKEN", s.sdk_ingest_token),
+    for name, value in (("SESSION_SIGNING_KEY", s.session_signing_key), ("SDK_TOKEN_SECRET", s.sdk_token_secret),
                         ("R2M_GRANT_SIGNING_KEY", s.grant_signing_key)):
-        if len(value) < 32:
+        if value is not None and len(value) < 32:
             raise ConfigError(f"{name} must be at least 32 characters")
     if s.keewano_enabled:
         for name in ("KEEWANO_API_KEY", "KEEWANO_PAT"):

@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 
-from ..auth import Actor, agent_installations
+from ..auth import Actor, SdkPrincipal, agent_installations
 from ..dependencies import actor, db, sdk
 from ..errors import not_found
 from ..schemas import PolicyRegistration, PolicySubmitIn
@@ -40,12 +40,13 @@ async def policies(agent_id: UUID, installation_id: UUID | None = None, a: Actor
     return {"policies": out}
 
 
-@router.post("/agents/{agent_id}/policies/register", dependencies=[Depends(sdk)])
-async def register(agent_id: UUID, body: PolicyRegistration, conn=Depends(db)):
-    if not await conn.fetchval("SELECT EXISTS(SELECT 1 FROM agents WHERE id=$1)", agent_id):
+@router.post("/agents/{agent_id}/policies/register")
+async def register(agent_id: UUID, body: PolicyRegistration, p: SdkPrincipal = Depends(sdk), conn=Depends(db)):
+    if not await conn.fetchval("SELECT EXISTS(SELECT 1 FROM agents WHERE id=$1 AND vendor_org_id=$2)", agent_id, p.vendor_org_id):
         raise not_found("agent")
     if body.installation_id and not await conn.fetchval(
-            "SELECT EXISTS(SELECT 1 FROM agent_installations WHERE id=$1 AND agent_id=$2)", body.installation_id, agent_id):
+            """SELECT EXISTS(SELECT 1 FROM agent_installations WHERE id=$1 AND agent_id=$2 AND customer_org_id=$3)""",
+            body.installation_id, agent_id, p.customer_org_id):
         raise not_found("installation")
     return {"policies": await policy_registry.register(conn, agent_id, body.policies, body.installation_id)}
 

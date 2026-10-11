@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from ..auth import Actor, agent_installations
+from ..auth import Actor, SdkPrincipal, agent_installations
 from ..dependencies import actor, db, sdk
 from ..errors import not_found
 from ..schemas import EvalRunIn
@@ -26,8 +26,8 @@ async def evaluations(agent_id: UUID, a: Actor = Depends(actor), conn=Depends(db
                       "cases": [dict(c) for c in cases if c["run_id"] == r["id"]]} for r in runs]}
 
 
-@router.post("/agents/{agent_id}/evaluations", status_code=201, dependencies=[Depends(sdk)])
-async def ingest_evaluation(agent_id: UUID, body: EvalRunIn, conn=Depends(db)):
-    if not await conn.fetchval("SELECT EXISTS(SELECT 1 FROM agents WHERE id=$1)", agent_id):
+@router.post("/agents/{agent_id}/evaluations", status_code=201)
+async def ingest_evaluation(agent_id: UUID, body: EvalRunIn, p: SdkPrincipal = Depends(sdk), conn=Depends(db)):
+    if not await conn.fetchval("SELECT EXISTS(SELECT 1 FROM agents WHERE id=$1 AND vendor_org_id=$2)", agent_id, p.vendor_org_id):
         raise not_found("agent")
     return await release_gate.ingest_run(conn, agent_id, body)

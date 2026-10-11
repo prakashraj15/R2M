@@ -116,14 +116,15 @@ async def _touch(conn, installation_id, occurred_at, component: str | None) -> N
                WHERE installation_id=$1 AND component_key=$2""", installation_id, component, occurred_at)
 
 
-async def ingest(conn, events) -> dict:
+async def ingest(conn, events, principal) -> dict:
     accepted, duplicates, rejected = 0, 0, []
     scopes: dict = {}
     for ev in sorted(events, key=lambda e: e.occurred_at):
         if ev.deployment_id not in scopes:
             scopes[ev.deployment_id] = await _deployment_scope(conn, ev.deployment_id)
         scope = scopes[ev.deployment_id]
-        if (not scope or scope["agent_id"] != ev.agent_id or scope["customer_org_id"] != ev.customer_org_id
+        if (not scope or (ev.vendor_org_id, ev.customer_org_id) != (principal.vendor_org_id, principal.customer_org_id)
+                or scope["agent_id"] != ev.agent_id or scope["customer_org_id"] != ev.customer_org_id
                 or scope["vendor_org_id"] != ev.vendor_org_id):
             rejected.append({"event_id": str(ev.event_id), "code": "scope_mismatch"})
             continue

@@ -7,7 +7,9 @@ from uuid import UUID
 
 import anyio.from_thread
 
+from ..database import Scope, apply_scope
 from ..workers.event_outbox import adapter
+from .trace_ingest import sanitize
 
 TRUST = "untrusted advisory data"
 
@@ -20,6 +22,7 @@ async def run_insight_query(conn, inst, question: str, keewano_enabled: bool) ->
         return {"status": "unavailable", "message": "intelligence unavailable: Keewano integration disabled or not installed"}
     try:
         result = await asyncio.wait_for(mod.query(question, {"installation_id": str(inst["id"])}), timeout=20)
+        result = sanitize(result if isinstance(result, dict) else {"value": str(result)})  # untrusted
         status = "ok"
     except Exception as exc:
         result, status = {"error_class": type(exc).__name__}, "failed"
@@ -42,6 +45,8 @@ class AgentInsights:
 
     async def _query(self, question: str) -> dict:
         async with self._pool.acquire() as conn:
+            # Row-level security: scope this connection to exactly this installation and its customer.
+            await apply_scope(conn, Scope((self._inst["id"],), (self._inst["customer_org_id"],)))
             out = await run_insight_query(conn, self._inst, question, self._enabled)
         if isinstance(out.get("insight_id"), UUID):
             out["insight_id"] = str(out["insight_id"])

@@ -9,14 +9,16 @@ import sys
 import threading
 import time
 
+import asyncpg
 import httpx
 import pytest
 import uvicorn
-from conftest import reset_db
+from conftest import CSRF, reset_db
 from seed_demo import uid
 
 from mock_agent import evals, memory
 from mock_agent.build import FAULTY_VERSION, SAFE_VERSION, build
+from r2m_platform.auth import issue_sdk_credential
 from r2m_platform.config import get_settings
 from r2m_platform.main import create_app
 
@@ -38,7 +40,8 @@ def live(monkeypatch, request):
     monkeypatch.setenv("R2M_INTERNAL_API_URL", f"http://127.0.0.1:{port}")
     sys.modules.pop("mock_agent.agent", None)  # the real agent, not a stub left by another test
     get_settings.cache_clear()
-    server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning",
+                                            proxy_headers=False))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     while not server.started:
@@ -50,8 +53,18 @@ def live(monkeypatch, request):
     memory.reset_all()
 
 
+async def _evals_token() -> str:
+    import os
+    conn = await asyncpg.connect(os.environ["TEST_DATABASE_URL"])
+    try:
+        return (await issue_sdk_credential(conn, os.environ["SDK_TOKEN_SECRET"], uid("org", "atlas"),
+                                           uid("org", "meridian"), "run-evals"))[1]
+    finally:
+        await conn.close()
+
+
 def login(base, email):
-    c = httpx.Client(base_url=base + "/api/v1", timeout=60, params={"installation_id": str(M_INST)})
+    c = httpx.Client(base_url=base + "/api/v1", timeout=60, params={"installation_id": str(M_INST)}, headers=CSRF)
     assert c.post("/demo/session", json={"email": email}).status_code == 200
     return c
 
@@ -66,7 +79,7 @@ def release_safe_build(live, ops, dev, security, release):
     import os
     say(ops, "How is payments-api?", "healthy")  # the agent registers its build and policies on first use
     sdk = httpx.Client(base_url=live + "/api/v1", timeout=60,
-                       headers={"authorization": f"Bearer {os.environ['SDK_INGEST_TOKEN']}"})
+                       headers={"authorization": f"Bearer {asyncio.run(_evals_token())}"})
     for run in evals.run_all(SAFE_VERSION):
         assert sdk.post(f"/agents/{AGENT}/evaluations", json=run).json()["status"] == "passed"
     for p in dev.get(f"/agents/{AGENT}/policies").json()["policies"]:
@@ -93,7 +106,7 @@ def test_opspilot_full_chain(live):
 
     # 2. Faulty build: evals fail, release blocked.
     sdk = httpx.Client(base_url=live + "/api/v1", timeout=60,
-                       headers={"authorization": f"Bearer {os.environ['SDK_INGEST_TOKEN']}"})
+                       headers={"authorization": f"Bearer {asyncio.run(_evals_token())}"})
     for version, expected in ((FAULTY_VERSION, "failed"), (SAFE_VERSION, None)):
         for run in evals.run_all(version):
             status = sdk.post(f"/agents/{AGENT}/evaluations", json=run).json()["status"]

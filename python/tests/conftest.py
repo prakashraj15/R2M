@@ -14,7 +14,7 @@ if not os.environ.get("TEST_DATABASE_URL"):
 os.environ.update({
     "APP_ENV": "demo", "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
     "DATABASE_SSL_MODE": os.environ.get("TEST_DATABASE_SSL_MODE", "disable"),
-    "SESSION_SIGNING_KEY": "test-signing-key-0123456789abcdef0123", "SDK_INGEST_TOKEN": "test-sdk-token-0123456789abcdef01234",
+    "SESSION_SIGNING_KEY": "test-signing-key-0123456789abcdef0123", "SDK_TOKEN_SECRET": "test-sdk-secret-0123456789abcdef0123",
     "R2M_INTERNAL_API_URL": "http://127.0.0.1:8000", "KEEWANO_ENABLED": "false",
 })
 
@@ -31,3 +31,12 @@ async def reset_db() -> None:
         await seed(conn)
     finally:
         await conn.close()
+
+
+CSRF = {"x-r2m-csrf": "1"}
+
+
+async def bypass(conn):
+    """Direct test queries run as r2m_app; give them platform-wide visibility (RLS bypass) explicitly."""
+    from r2m_platform.database import BYPASS, apply_scope
+    await apply_scope(conn, BYPASS)

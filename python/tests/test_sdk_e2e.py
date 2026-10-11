@@ -9,14 +9,25 @@ import time
 import httpx
 import pytest
 import uvicorn
-from conftest import reset_db
+import asyncpg
+from conftest import CSRF, reset_db
 from seed_demo import uid
 
 import opspilot_stub
+from r2m_platform.auth import issue_sdk_credential
 from r2m_platform.config import get_settings
 from r2m_platform.main import create_app
 
 AGENT, M_INST = uid("agent", "opspilot"), uid("installation", "opspilot:meridian")
+
+
+async def _evals_token() -> str:
+    conn = await asyncpg.connect(os.environ["TEST_DATABASE_URL"])
+    try:
+        return (await issue_sdk_credential(conn, os.environ["SDK_TOKEN_SECRET"], uid("org", "atlas"),
+                                           uid("org", "meridian"), "run-evals"))[1]
+    finally:
+        await conn.close()
 
 
 @pytest.fixture
@@ -28,7 +39,7 @@ def live(monkeypatch):
     monkeypatch.setenv("R2M_INTERNAL_API_URL", f"http://127.0.0.1:{port}")
     monkeypatch.setitem(sys.modules, "mock_agent.agent", opspilot_stub)
     get_settings.cache_clear()
-    server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning", proxy_headers=False))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     while not server.started:
@@ -40,7 +51,7 @@ def live(monkeypatch):
 
 
 def login(base, email):
-    c = httpx.Client(base_url=base + "/api/v1", timeout=30)
+    c = httpx.Client(base_url=base + "/api/v1", timeout=30, headers=CSRF)
     assert c.post("/demo/session", json={"email": email}).status_code == 200
     return c
 
@@ -56,7 +67,7 @@ def test_full_governance_chain_with_real_sdk(live):
     assert first["decision"] == "DENY" and "DEPLOYMENT_NOT_ACTIVE" in first["reasons"]
 
     # 2. Release: evals pass, vendor submits DEPLOY-001, customer security approves, release manager deploys.
-    sdk = httpx.Client(base_url=live + "/api/v1", headers={"authorization": f"Bearer {os.environ['SDK_INGEST_TOKEN']}"})
+    sdk = httpx.Client(base_url=live + "/api/v1", headers={"authorization": f"Bearer {asyncio.run(_evals_token())}"})
     b = opspilot_stub.BUILD
     assert sdk.post(f"/agents/{AGENT}/evaluations", json={
         "build": {"version": b["build_version"], "source_digest": b["source_digest"], "artifact_digest": b["artifact_digest"]},

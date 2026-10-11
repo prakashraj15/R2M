@@ -15,7 +15,7 @@ from uuid import UUID
 import anyio.to_thread
 from fastapi import APIRouter, Depends, Request
 
-from ..auth import Actor, scoped_installations
+from ..auth import Actor, issue_sdk_credential, scoped_installations
 from ..config import Settings
 from ..dependencies import actor, db, settings
 from ..errors import ApiError, not_found
@@ -67,6 +67,9 @@ async def message(body: DemoMessageIn, request: Request, installation_id: UUID |
         "build_version": dep["version"], "customer_org_id": str(inst["customer_org_id"]),
         "vendor_org_id": str(inst["vendor_org_id"]), "environment": inst["environment"],
         "api_url": cfg.internal_api_url, "request_id": request.state.request_id,
+        # Per-customer SDK token (vendor+customer scoped), not a platform-wide secret.
+        "sdk_token": (await issue_sdk_credential(conn, cfg.sdk_token_secret, inst["vendor_org_id"],
+                                                 inst["customer_org_id"], "demo-agent", reuse=True))[1],
         "actor": {"user_id": str(a.user_id), "email": a.email, "roles": sorted({m["role"] for m in a.memberships})},
     }
     try:
@@ -87,7 +90,7 @@ async def reset(scenario_id: str, request: Request, installation_id: UUID | None
     if scenario_id not in simulation.BASELINES:
         raise not_found("scenario")
     inst = await _demo_installation(conn, a, installation_id)
-    out = await simulation.reset(conn, inst["customer_org_id"], scenario_id)
+    out = await simulation.reset(conn, inst["customer_org_id"], scenario_id, inst["id"])
     await audit(conn, a.user_id, inst["customer_org_id"], "demo.scenario.reset", "installation", inst["id"],
                 request.state.request_id, {"scenario": scenario_id})
     return out
