@@ -1944,3 +1944,29 @@ pre {
     flex-direction: column;
   }
 }
+/* Imperial II identity: serif letters with a lime Roman numeral accent. */
+.r2m-mark {
+  display: block;
+  width: 100px;
+  height: auto;
+  flex-shrink: 0;
+  color: var(--foreground);
+}
+.brand .r2m-mark {
+  width: 104px;
+}
+.back-link .r2m-mark {
+  width: 58px;
+}
+.session-brand {
+  width: 130px;
+  margin-bottom: 24px;
+}
+@media (max-width: 760px) {
+  .brand .r2m-mark {
+    width: 72px;
+  }
+  .back-link .r2m-mark {
+    width: 42px;
+  }
+}

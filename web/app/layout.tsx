@@ -6,6 +6,7 @@ import "@xyflow/react/dist/style.css";
 export const metadata: Metadata = {
   title: "R2M — Responsibility to Monitoring",
   description: "OpsPilot governance and observability frontend prototype.",
+  icons: { icon: "/brand/r2m-icon.svg" },
 };
 export default function RootLayout({
   children,

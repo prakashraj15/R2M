@@ -1,4 +1,5 @@
 "use client";
+import { BrandMark } from "@/components/brand/BrandMark";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, ApiError, type Identity, type Session } from "@/lib/api";
@@ -51,6 +52,7 @@ export default function SessionPage() {
   }
   return (
     <main style={{ maxWidth: 800, margin: "40px auto" }}>
+      <BrandMark className="session-brand" />
       <Link href="/" className="text-link">
         ← Return to mock preview
       </Link>
