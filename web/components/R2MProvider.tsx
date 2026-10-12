@@ -38,6 +38,8 @@ interface Context {
   policies: Policy[];
   components: ComponentInfo[];
   agentId: string;
+  /** Link root for this agent's workspace, from its registered slug. */
+  base: string;
   loading: boolean;
   refresh: () => Promise<void>;
 }
@@ -67,9 +69,12 @@ export function R2MProvider({ children }: { children: ReactNode }) {
       if (APP === "desk") {
         const s = await deskRequest("/state");
         const runs = deskRuns.current;
+        const b = s.build;
         setState({ ...emptyState(), service: mapService(s.service), runs,
-                   approvals: deskApprovals(runs),
-                   builds: [{ id: "live", version: "deployed", digest: "", tested: true, deployed: true, cases: [] }] });
+                   approvals: deskApprovals(runs, s.identity.agent),
+                   identity: { ...s.identity, agentSlug: s.identity.agent_slug, service: s.service?.service_key ?? "" },
+                   builds: [{ id: b.artifact_digest, version: b.version, digest: b.artifact_digest, tested: false, cases: [],
+                              deployed: b.deployment_status === "deployed", deploymentStatus: b.deployment_status }] });
       } else {
         const live = await loadControl();
         setState(live.state);
@@ -127,6 +132,10 @@ export function R2MProvider({ children }: { children: ReactNode }) {
         await api.decision(command.id, command.decision === "approved" ? "approve" : "reject", command.reason);
         setMessage(`Decision recorded in R2M: ${command.decision}.`);
         break;
+      case "submitPolicy":
+        await api.submitPolicy(agentId, command.id, installationId);
+        setMessage("Policy revision submitted. The customer's security reviewer sees it in Approvals.");
+        break;
       case "revoke":
         await api.decision(command.id, "revoke", command.reason);
         setMessage("Policy approval revoked. The next governed action is denied until it is re-approved.");
@@ -152,9 +161,9 @@ export function R2MProvider({ children }: { children: ReactNode }) {
         break;
       }
       case "run": {
-        if (APP !== "desk") throw Error("Chat with OpsPilot in the Operations Desk app.");
-        setMessage("OpsPilot is working (live model + R2M policy gate)…");
-        const prompt = command.prompt || "How is payments-api doing?";
+        if (APP !== "desk") throw Error("Chat with the agent in its operations desk.");
+        setMessage(`${state.identity.agent} is working (live model + R2M policy gate)…`);
+        const prompt = command.prompt || `How is ${state.identity.service} doing?`;
         const reply = await deskRequest("/message", {
           method: "POST",
           body: JSON.stringify({ message: prompt, scenario: toLiveScenario(command.scenario) }),
@@ -197,6 +206,7 @@ export function R2MProvider({ children }: { children: ReactNode }) {
         policies,
         components,
         agentId,
+        base: state.identity.agentSlug ? `/agents/${state.identity.agentSlug}` : "/",
         loading,
         refresh,
       }}

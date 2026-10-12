@@ -8,14 +8,15 @@ import { AgentTopology } from "./AgentTopology";
 import { NodeInspector } from "./NodeInspector";
 import { PageHeader, Badge } from "@/components/ui/shared";
 export function Workspace() {
-  const { state, components } = useR2M();
+  const { state, components, base } = useR2M();
+  const { identity } = state;
   const [selected, setSelected] = useState("gateway");
   const nodes = components;
   return (
     <>
       <PageHeader
         eyebrow="Agent workspace / Architecture"
-        title="OpsPilot"
+        title={identity.agent}
         description="An operations agent with clear boundaries. Every component, connected."
         actions={
           <Link className="button button-primary" href={DESK_URL}>
@@ -25,10 +26,10 @@ export function Workspace() {
       />
       <div className="context-row">
         <span>
-          VENDOR <strong>Atlas Applied AI</strong>
+          VENDOR <strong>{identity.vendor}</strong>
         </span>
         <span>
-          CUSTOMER <strong>Meridian Financial</strong>
+          CUSTOMER <strong>{identity.customer}</strong>
         </span>
         <span>
           ENVIRONMENT <strong>Production</strong>
@@ -40,7 +41,7 @@ export function Workspace() {
           <div className="panel-heading">
             <div className="tabs">
               <span className="selected">Architecture</span>
-              <Link href="/agents/opspilot/traces">Execution traces</Link>
+              <Link href={`${base}/traces`}>Execution traces</Link>
             </div>
             <span className="tiny muted">6 components · Select to inspect</span>
           </div>

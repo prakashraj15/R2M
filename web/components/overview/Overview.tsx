@@ -12,7 +12,8 @@ import { DESK_URL } from "@/lib/live-adapter";
 
 type Obj = Record<string, any>;
 export function Overview() {
-  const { state, org, agentId } = useR2M();
+  const { state, user, agentId, base } = useR2M();
+  const { identity } = state;
   const summary = useLive<{ summary: Obj }>(agentId ? `/agents/${agentId}/metrics?range=24h` : null)?.summary;
   const keewano = useLive<Obj>("/integrations/keewano");
   const keewanoOn = !!(keewano?.platform_enabled && keewano?.adapter_installed);
@@ -34,12 +35,12 @@ export function Overview() {
       <PageHeader
         eyebrow="Your AI operations, accountable by design"
         title="Organization overview"
-        description={`${org === "atlas" ? "Atlas Applied AI" : "Meridian Financial"} · Visibility from policy responsibility to monitored outcome.`}
+        description={`${user?.organization ?? ""} · Visibility from policy responsibility to monitored outcome.`}
         actions={
           <>
             <span className="period">Last 24h · live</span>
             <Link className="button button-primary" href={DESK_URL}>
-              Open OpsPilot <ArrowUpRight size={15} />
+              Open {identity.agent} <ArrowUpRight size={15} />
             </Link>
           </>
         }
@@ -109,7 +110,7 @@ export function Overview() {
                 <small>Open review center →</small>
               </div>
             </Link>
-            <Link href="/agents/opspilot/evaluations">
+            <Link href={`${base}/evaluations`}>
               <span className={`signal ${blocked.length ? "red" : "neutral"}`}>
                 <ShieldAlert size={17} />
               </span>
@@ -119,7 +120,7 @@ export function Overview() {
                 <small>Inspect build evidence →</small>
               </div>
             </Link>
-            <Link href="/agents/opspilot/orchestration">
+            <Link href={`${base}/orchestration`}>
               <span className="signal neutral">
                 <Unplug size={17} />
               </span>
@@ -134,7 +135,7 @@ export function Overview() {
       </div>
       <Panel
         title="Agent registry"
-        subtitle="Installed at Meridian Financial"
+        subtitle={`Installed at ${identity.customer}`}
         action={<Badge tone="gray">01 agent</Badge>}
       >
         <AgentCard />

@@ -25,24 +25,24 @@ import {
 import { roleNames } from "@/lib/permissions";
 import { BrandMark } from "@/components/brand/BrandMark";
 import { useR2M } from "@/components/R2MProvider";
-const agent = "/agents/opspilot";
+// Paths under the agent's workspace (/agents/<registered slug>).
 const links = [
-  ["Architecture", agent, Workflow],
-  ["Models", agent + "/models", Boxes],
-  ["Tools", agent + "/tools", Wrench],
-  ["Orchestration", agent + "/orchestration", GitBranch],
-  ["Memory & storage", agent + "/storage", Database],
-  ["Compute", agent + "/compute", Cpu],
-  ["Policies", agent + "/policies", ShieldCheck],
-  ["Build evaluations", agent + "/evaluations", ListChecks],
-  ["Observability", agent + "/traces", Activity],
-  ["Security", agent + "/security", ShieldAlert],
-  ["Costs", agent + "/costs", ChartNoAxesCombined],
-  ["Evidence", agent + "/evidence", FileCheck2],
+  ["Architecture", "", Workflow],
+  ["Models", "/models", Boxes],
+  ["Tools", "/tools", Wrench],
+  ["Orchestration", "/orchestration", GitBranch],
+  ["Memory & storage", "/storage", Database],
+  ["Compute", "/compute", Cpu],
+  ["Policies", "/policies", ShieldCheck],
+  ["Build evaluations", "/evaluations", ListChecks],
+  ["Observability", "/traces", Activity],
+  ["Security", "/security", ShieldAlert],
+  ["Costs", "/costs", ChartNoAxesCombined],
+  ["Evidence", "/evidence", FileCheck2],
 ] as const;
 export function Sidebar() {
   const path = usePathname();
-  const { state, role, user } = useR2M();
+  const { state, role, user, base } = useR2M();
   const initials = (user?.organization ?? "").split(" ").map((w) => w[0]).join("").slice(0, 2);
   const count = state.approvals.filter((a) => a.status === "pending").length;
   return (
@@ -73,9 +73,9 @@ export function Sidebar() {
           {count > 0 && <b>{count}</b>}
         </Link>
       </nav>
-      <div className="nav-label">OPSPILOT WORKSPACE</div>
+      <div className="nav-label">{(state.identity.agent || "Agent").toUpperCase()} WORKSPACE</div>
       <nav aria-label="Agent navigation">
-        {links.map(([name, href, Icon]) => (
+        {links.map(([name, sub, Icon]) => [name, base + sub, Icon] as const).map(([name, href, Icon]) => (
           <Link
             className={path === href ? "active" : ""}
             href={href}
@@ -90,7 +90,7 @@ export function Sidebar() {
       <div className="sidebar-bottom">
         <a className="demo-link" href={DESK_URL}>
           <PlugZap size={17} />
-          <span>Open OpsPilot desk</span>
+          <span>Open {state.identity.agent || "agent"} desk</span>
           <ArrowUpRight size={14} />
         </a>
         <div className="profile">

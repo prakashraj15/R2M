@@ -2,7 +2,9 @@
 import Link from "next/link";
 import type { Span } from "@/lib/types";
 import { Panel, Badge } from "@/components/ui/shared";
+import { useR2M } from "@/components/R2MProvider";
 export function EventDetail({ span }: { span: Span }) {
+  const { base } = useR2M();
   return (
     <Panel
       title="Event detail"
@@ -26,7 +28,7 @@ export function EventDetail({ span }: { span: Span }) {
           )}
         </pre>
         {span.policy && (
-          <Link className="text-link" href="/agents/opspilot/policies">
+          <Link className="text-link" href={`${base}/policies`}>
             Inspect {span.policy} →
           </Link>
         )}

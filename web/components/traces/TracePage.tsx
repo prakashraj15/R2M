@@ -17,15 +17,15 @@ export function TracePage() {
   if (!run)
     return (
       <>
-        <PageHeader eyebrow="OpsPilot / Native observability" title="Execution traces" description="Follow the path from observation to decision and verified effect." />
-        <Empty title="No executions yet" description="Traces appear when OpsPilot reports a run through the R2M SDK." />
+        <PageHeader eyebrow={`${state.identity.agent} / Native observability`} title="Execution traces" description="Follow the path from observation to decision and verified effect." />
+        <Empty title="No executions yet" description="Traces appear when the agent reports a run through the R2M SDK." />
       </>
     );
   const span = run.spans.find((s) => s.id === spanId) || run.spans[0];
   return (
     <>
       <PageHeader
-        eyebrow="OpsPilot / Native observability"
+        eyebrow={`${state.identity.agent} / Native observability`}
         title="Execution traces"
         description="Follow the path from observation to decision and verified effect."
         actions={
@@ -67,11 +67,11 @@ export function TracePage() {
             <p className="body-copy">{run.recommendation}</p>
             <div className="kv">
               <span>Agent owner</span>
-              <strong>Atlas Applied AI</strong>
+              <strong>{state.identity.vendor}</strong>
             </div>
             <div className="kv">
               <span>Customer scope</span>
-              <strong>Meridian Financial</strong>
+              <strong>{state.identity.customer}</strong>
             </div>
             <div className="kv">
               <span>Historical intelligence</span>

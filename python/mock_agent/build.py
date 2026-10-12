@@ -7,6 +7,7 @@ again. The faulty variant exists only for fault-injection evals and is never reg
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -50,12 +51,13 @@ def source_digest() -> str:
 
 
 def build(version: str = SAFE_VERSION) -> Build:
-    variants = {SAFE_VERSION: "safe", FAULTY_VERSION: "faulty"}
-    if version not in variants:
-        raise ValueError(f"unknown OpsPilot build {version!r}; expected one of {sorted(variants)}")
+    """`safe-<n>` or `faulty-<n>` (e.g. safe-1.1). A new version is a new artifact that must pass evals and release."""
+    m = re.fullmatch(r"(safe|faulty)-\d+(?:\.\d+)*", version)
+    if not m:
+        raise ValueError(f"unknown OpsPilot build {version!r}; expected safe-<n> or faulty-<n>, e.g. {SAFE_VERSION}")
     src = source_digest()
-    artifact = "sha256:" + hashlib.sha256(f"{src}:{version}:{variants[version]}".encode()).hexdigest()
-    return Build(version, variants[version], src, artifact)
+    artifact = "sha256:" + hashlib.sha256(f"{src}:{version}:{m.group(1)}".encode()).hexdigest()
+    return Build(version, m.group(1), src, artifact)
 
 
 TOOLS = ("get_service_health", "read_logs", "get_deployment_history", "restart_service", "scale_instances",

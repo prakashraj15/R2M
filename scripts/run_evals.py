@@ -33,12 +33,16 @@ def agent_id(slug: str) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--agent", default=AGENT_SLUG, choices=[AGENT_SLUG])
-    ap.add_argument("--build", required=True, help="safe-1.0 | faulty-1.0")
-    ap.add_argument("--api-url", default=os.environ.get("R2M_INTERNAL_API_URL", "http://127.0.0.1:8000"))
+    ap.add_argument("--build", default=os.environ.get("OPSPILOT_BUILD_VERSION"),
+                    help="safe-<n> | faulty-<n>; defaults to OPSPILOT_BUILD_VERSION (the opspilot container's version)")
+    ap.add_argument("--api-url", default=os.environ.get("R2M_INTERNAL_API_URL") or os.environ.get("R2M_API_URL")
+                    or "http://127.0.0.1:8000")
     ap.add_argument("--agent-id", default=None, help="defaults to the seeded deterministic id")
     ap.add_argument("--dry-run", action="store_true", help="run offline only; do not post results")
     ap.add_argument("--json", action="store_true", help="print the full result payloads")
     args = ap.parse_args()
+    if not args.build:
+        ap.error("--build is required (or set OPSPILOT_BUILD_VERSION)")
 
     b = build(args.build)
     print(f"OpsPilot build {b.version} ({b.variant})\n  source   {b.source_digest}\n  artifact {b.artifact_digest}")
@@ -61,9 +65,9 @@ def main() -> int:
           + (f" ({len(failures)} mandatory failures)" if failures else ""))
 
     if not args.dry_run:
-        token = os.environ.get("SDK_INGEST_TOKEN")
+        token = os.environ.get("SDK_INGEST_TOKEN") or os.environ.get("OPSPILOT_SDK_TOKEN")
         if not token:
-            print("SDK_INGEST_TOKEN is not set; use --dry-run to skip uploading", file=sys.stderr)
+            print("SDK_INGEST_TOKEN (or OPSPILOT_SDK_TOKEN) is not set; use --dry-run to skip uploading", file=sys.stderr)
             return 2
         aid = args.agent_id or agent_id(args.agent)
         with httpx.Client(base_url=args.api_url.rstrip("/") + "/api/v1", timeout=60,

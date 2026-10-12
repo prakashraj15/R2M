@@ -25,6 +25,9 @@ export interface Policy {
   permission: string;
   updated: string;
   review: string;
+  revisionId: string; // latest revision of this policy
+  activeVersion?: string; // the revision currently approved here, when it isn't the latest
+  canSubmit: boolean; // latest revision has no pending or active submission at this installation
 }
 export interface Span {
   id: string;
@@ -69,6 +72,7 @@ export interface Approval {
   executionId?: string;
   reason?: string;
   reviewedBy?: string;
+  canDecide?: boolean; // the server's answer for the signed-in user (role, own submission, still pending)
 }
 export interface TestCase {
   id: string;
@@ -91,6 +95,10 @@ export interface Build {
   deploymentId?: string;
   deploymentStatus?: string;
   gate?: { evaluations: boolean; policies: boolean; artifact: boolean; scope: boolean };
+  evaluatedAt?: string; // latest CI upload
+  declaredPolicies?: string[]; // the build's policy manifest (key@version)
+  unapprovedPolicies?: string[]; // of those, not yet approved at this installation
+  suites?: string[];
 }
 export interface ServiceState {
   version: string;
@@ -107,12 +115,22 @@ export interface AuditEvent {
   detail: string;
   at: string;
 }
+/** Who and what the screens are about, as registered in R2M (never assumed by the UI). */
+export interface Identity {
+  agent: string;
+  agentSlug: string;
+  vendor: string;
+  customer: string;
+  environment: string;
+  service: string;
+}
 export interface AppState {
   approvals: Approval[];
   builds: Build[];
   runs: Execution[];
   service: ServiceState;
   audit: AuditEvent[];
+  identity: Identity;
 }
 export interface ComponentInfo {
   id: string;

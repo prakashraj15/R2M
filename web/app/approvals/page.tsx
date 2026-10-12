@@ -70,7 +70,7 @@ export default function Page() {
         <Panel title="Review queue">
           <Empty
             title="No matching requests"
-            description="Run the rollback scenario in OpsPilot to create an exact-action approval request."
+            description="Exact-action requests appear here when the agent proposes a change that a policy says needs approval (for example a rollback from the operations desk)."
           />
         </Panel>
       )}

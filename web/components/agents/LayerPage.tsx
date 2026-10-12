@@ -6,6 +6,8 @@ import { useR2M } from "@/components/R2MProvider";
 import { MetricCard } from "@/components/metrics/MetricCard";
 import { PageHeader, Panel, Badge, Empty } from "@/components/ui/shared";
 import { useLive } from "@/components/ui/useLive";
+import { useState } from "react";
+import { api } from "@/lib/api";
 
 type Obj = Record<string, any>;
 const titles: Record<string, string> = {
@@ -19,10 +21,22 @@ const ms = (v: number | null | undefined) => (v == null ? "Unknown" : `${Math.ro
 const usd = (v: number | null | undefined) => (v == null ? "Unknown" : `$${v.toFixed(4)}`);
 
 export function LayerPage({ layer }: { layer: string }) {
-  const { state, agentId, policies } = useR2M();
+  const { state, agentId, policies, base } = useR2M();
+  const { identity } = state;
   const topo = useLive<{ nodes: Obj[] }>(agentId ? `/agents/${agentId}/topology?range=24h` : null);
   const metrics = useLive<{ summary: Obj }>(agentId ? `/agents/${agentId}/metrics?range=24h` : null);
-  const keewano = useLive<Obj>(layer === "orchestration" || layer === "storage" ? "/integrations/keewano" : null);
+  const { role, notify } = useR2M();
+  const [version, setVersion] = useState(0);
+  const keewano = useLive<Obj>(layer === "orchestration" || layer === "storage" ? `/integrations/keewano?v=${version}` : null);
+  async function setMirroring(orgId: string, enabled: boolean) {
+    try {
+      await api.configureIntegration(orgId, enabled);
+      notify(`Keewano mirroring ${enabled ? "enabled" : "disabled"}.`);
+      setVersion((v) => v + 1);
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Could not change the integration.");
+    }
+  }
   const ready = useLive<Obj>(layer === "storage" ? "/health/ready" : null);
   const nodes = topo?.nodes ?? [];
   const ofKind = (...kinds: string[]) => nodes.filter((n) => kinds.includes(n.kind));
@@ -38,7 +52,7 @@ export function LayerPage({ layer }: { layer: string }) {
   return (
     <>
       <PageHeader
-        eyebrow={`OpsPilot / ${layer}`}
+        eyebrow={`${identity.agent} / ${layer}`}
         title={titles[layer]}
         description="The same agent, execution records, and evidence—seen through a different layer. Live, last 24 h."
       />
@@ -75,7 +89,7 @@ export function LayerPage({ layer }: { layer: string }) {
             </div>
             <div className="panel-body">
               <p className="helper">{cost?.provenance_note}</p>
-              <Link href="/agents/opspilot/traces" className="text-link">Inspect model spans →</Link>
+              <Link href={`${base}/traces`} className="text-link">Inspect model spans →</Link>
             </div>
           </Panel>
         </>
@@ -96,7 +110,7 @@ export function LayerPage({ layer }: { layer: string }) {
                       <td>{n.metrics?.errors ?? 0}</td>
                       <td>{ms(n.metrics?.p95_ms)}</td>
                       <td>{gov.length ? <Badge tone="green">Governed · {gov.join(", ")}</Badge> : <Badge tone="gray">Observed</Badge>}</td>
-                      <td><Link href="/agents/opspilot/traces" className="text-link">Trace →</Link></td>
+                      <td><Link href={`${base}/traces`} className="text-link">Trace →</Link></td>
                     </tr>
                   );
                 })}
@@ -122,7 +136,7 @@ export function LayerPage({ layer }: { layer: string }) {
               <div className="kv"><span>Completed</span><strong>{state.runs.filter((r) => r.status === "completed").length}</strong></div>
               <div className="kv"><span>Denied</span><strong>{state.runs.filter((r) => r.status === "rejected").length}</strong></div>
               <div className="kv"><span>Run success (24 h)</span><strong>{metrics?.summary?.run_success?.value == null ? "Unknown" : `${Math.round(metrics.summary.run_success.value * 100)}%`}</strong></div>
-              <Link href="/agents/opspilot/traces" className="text-link">Open execution waterfall →</Link>
+              <Link href={`${base}/traces`} className="text-link">Open execution waterfall →</Link>
             </div>
           </Panel>
           <div className="section-gap">
@@ -135,6 +149,11 @@ export function LayerPage({ layer }: { layer: string }) {
                   <div className="kv" key={o.organization_id}>
                     <span>{o.name}</span>
                     <strong>{o.enabled ? "Mirroring" : "Off"} · backlog {o.backlog} · dead {o.dead} · last sent {o.last_success_at ? new Date(o.last_success_at).toLocaleString() : "never"}</strong>
+                    {role === "customer_security" && keewano?.platform_enabled && (
+                      <button className="button" onClick={() => void setMirroring(o.organization_id, !o.enabled)}>
+                        {o.enabled ? "Turn off" : "Turn on"}
+                      </button>
+                    )}
                   </div>
                 ))}
                 <div className="kv">
@@ -149,7 +168,7 @@ export function LayerPage({ layer }: { layer: string }) {
       ) : layer === "compute" ? (
         <>
           <div className="metrics-grid three">
-            <MetricCard label="Service CPU" value={`${state.service.cpu}%`} detail="payments-api, the service under OpsPilot's control" />
+            <MetricCard label="Service CPU" value={`${state.service.cpu}%`} detail={`${identity.service}, the service under ${identity.agent}'s control`} />
             <MetricCard label="Memory utilization" value={`${state.service.memory}%`} detail={`p95 ${state.service.latency} ms · errors ${state.service.errorRate}%`} />
             <MetricCard label="Replica count" value={state.service.replicas} detail={`${state.service.version} · ${state.service.health}`} accent />
           </div>

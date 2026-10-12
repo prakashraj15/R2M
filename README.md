@@ -61,6 +61,15 @@ Live agent replies take 20–40 s.
 
 Passwords: `scripts/set_password.py` (see Run it). They are stored only as scrypt hashes.
 
+**0. Release a new version (vendor → customer → release)**
+
+A build is the agent's code plus its version. Releasing one is the whole release-gate story:
+1. **Ship it.** Set `OPSPILOT_BUILD_VERSION=safe-1.2` in `.env` and run `docker compose up -d opspilot`.
+2. **It registers as proposed.** Send any message on the desk. The status line under the chat says *Build safe-1.2 is proposed*, and every change OpsPilot attempts is denied (`DEPLOYMENT_NOT_ACTIVE`).
+3. **CI evaluates it.** Run `docker compose exec opspilot python scripts/run_evals.py`. In the Control Plane under **Build evaluations**, `safe-1.2` now shows its suites and 24/24 passed. (`OPSPILOT_BUILD_VERSION=faulty-1.1` fails a mandatory test, and the gate blocks it.)
+4. **Policies.** If the build ships a changed policy, the **vendor developer** opens **Policies** and clicks **Submit vX for … review**, then the **security reviewer** approves it under **Approvals**. Unchanged policies stay approved.
+5. **Release.** As **release manager**, select the build and click **Evaluate release eligibility** (all four checks must pass), then **Deploy to production**. The desk status line now shows the live build.
+
 **1. Live run, start to end**
 1. In the **Operations Desk** (:3001), select the **degraded** scenario (this resets payments-api) and send *"payments-api is throwing errors, please fix it"*.
 2. OpsPilot observes and diagnoses, then asks Keewano. It proposes a **rollback to v2.0** (source: Keewano), which returns **REQUIRE_APPROVAL**.
@@ -70,7 +79,9 @@ Passwords: `scripts/set_password.py` (see Run it). They are stored only as scryp
 
 **2. Changing policy at runtime**
 1. As **customer_security**, revoke **DEPLOY-001**. The next rollback request is immediately **DENIED** (`POLICY_NOT_APPROVED`).
-2. As **vendor_developer**, re-submit it; as **customer_security**, approve it. Rollback is governed again.
+2. As **vendor_developer**, open **Policies** → DEPLOY-001 → **Submit for review**; as **customer_security**, approve it under **Approvals**. Rollback is governed again.
+
+Keewano mirroring is switched on and off under **Orchestration** (security reviewer).
 
 **3. Controlling tools and cost**
 - **Scale limit:** *"scale payments-api to 8 replicas"* needs approval under CAPACITY-001 (more than 4 replicas).
@@ -167,6 +178,7 @@ The tests cover tenant isolation on every endpoint, cross-tenant access by direc
 
 ## Known limitations
 
+- The agent keeps a pending action in process memory: if the OpsPilot container restarts between a rollback request and "approved, continue", the agent asks again (the old approval expires unused).
 - Password sign-in only: no SSO/OIDC, MFA or self-service reset yet (`scripts/set_password.py` sets passwords). Setting a new password ends that user's Control Plane sessions; desk sessions run to their 8 h expiry.
 - Synthetic data and a simulated `payments-api`; no real infrastructure, cloud or payment integration.
 - Not a compliance attestation. The evidence checksums detect tampering but are not WORM storage.

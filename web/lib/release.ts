@@ -10,6 +10,7 @@ export type Command =
   | { type: "evaluateRelease"; id: string }
   | { type: "deploy"; id: string }
   | { type: "revoke"; id: string; reason: string }
+  | { type: "submitPolicy"; id: string } // policy revision id
   | { type: "run"; scenario: Scenario; prompt?: string };
 /** Release-gate checks for a build: the platform's computed gate when it has one, else derived from its eval cases. */
 export function releaseChecks(state: AppState, buildId: string) {

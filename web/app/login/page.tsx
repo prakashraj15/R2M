@@ -37,7 +37,7 @@ export default function LoginPage() {
         transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
       >
         <BrandMark />
-        <h1>{desk ? "OpsPilot operations desk" : "R2M control plane"}</h1>
+        <h1>{desk ? "Operations desk" : "R2M control plane"}</h1>
         <p className="body-copy">{desk ? "Sign in with your R2M account." : "Sign in to your organization."}</p>
         <label className="field-label" htmlFor="email">EMAIL</label>
         <input id="email" type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} />

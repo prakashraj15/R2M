@@ -121,8 +121,13 @@ def test_opspilot_full_chain(live):
     assert ops.desk.post("/agent-api/message", json={"message": "hi"}, headers={"x-r2m-csrf": ""}).status_code == 403
 
     # 1. The agent's build is new, so it is only proposed and every guarded action is denied.
+    desk = ops.desk.get("/agent-api/state").json()  # identity and release status come from R2M, not the UI
+    assert desk["identity"] == {"agent": "OpsPilot", "agent_slug": "opspilot", "vendor": "Atlas Applied AI",
+                                "customer": "Meridian Financial", "environment": "production"}
+    assert desk["build"]["deployment_status"] == "unregistered"  # until the agent's first turn registers it
     first = say(ops, "restart payments-api", "degraded")
     assert first["build"]["deployment_status"] == "proposed"
+    assert ops.desk.get("/agent-api/state").json()["build"]["deployment_status"] == "proposed"
     assert first["decision"] == "DENY" and "DEPLOYMENT_NOT_ACTIVE" in first["reasons"]
 
     # 2. Faulty build: evals fail, release blocked.
@@ -152,6 +157,9 @@ def test_opspilot_full_chain(live):
         "artifact_digest": build(SAFE_VERSION).artifact_digest}).json()
     assert gate["status"] == "eligible", gate
     assert release.post(f"/agents/{AGENT}/deployments/{gate['deployment_id']}/deploy").json()["status"] == "deployed"
+    assert ops.desk.get("/agent-api/state").json()["build"]["deployment_status"] == "deployed"
+    listed = next(d for d in release.get(f"/agents/{AGENT}/deployments").json()["deployments"] if d["id"] == gate["deployment_id"])
+    assert listed["declared_policies"] and listed["unapproved_policies"] == []  # what the UI's gate preview reads
 
     # 4. Healthy observation: no mutation, traced with simulated cost.
     ops.post("/operations/scenarios/healthy/reset")
@@ -172,7 +180,9 @@ def test_opspilot_full_chain(live):
     pending = say(ops, "Roll back payments-api to v2.0", "approval")
     assert pending["decision"] == "REQUIRE_APPROVAL" and pending["approval_id"]
     approvals = security.get("/approvals").json()
-    assert any(str(a["id"]) == str(pending["approval_id"]) for a in approvals.get("approvals", approvals))
+    req = next(a for a in approvals.get("approvals", approvals) if str(a["id"]) == str(pending["approval_id"]))
+    # the UI enables Approve from these: the governing policy's key (its approval must be in force) and can_decide
+    assert req["policy_key"] == "DEPLOY-001" and req["can_decide"] is True
     assert security.post(f"/approvals/{pending['approval_id']}/decision",
                          json={"decision": "approve"}).json()["status"] == "approved"
     done = say(ops, "continue", "approval")

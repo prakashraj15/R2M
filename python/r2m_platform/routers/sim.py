@@ -34,6 +34,24 @@ async def _installation(conn, principal: SdkPrincipal, execution_id: UUID | None
     return inst
 
 
+@router.get("/context")
+async def context(artifact_digest: str | None = None, p: SdkPrincipal = Depends(sdk), conn=Depends(db)):
+    """Who the token belongs to: vendor, customer, environment, services, and (given its digest) the release status
+    of the agent's build at this installation: proposed, eligible, blocked, deployed, retired, or unregistered."""
+    names = {r["id"]: r["name"] for r in await conn.fetch(
+        "SELECT id, name FROM organizations WHERE id = ANY($1::uuid[])", [p.vendor_org_id, p.customer_org_id])}
+    inst = await _installation(conn, p, None)
+    return {"vendor_org_id": p.vendor_org_id, "vendor_name": names.get(p.vendor_org_id),
+            "customer_org_id": p.customer_org_id, "customer_name": names.get(p.customer_org_id),
+            "installation_id": inst,
+            "environment": await conn.fetchval("SELECT environment FROM agent_installations WHERE id=$1", inst),
+            "services": [s["service_key"] for s in await simulation.services(conn, p.customer_org_id)],
+            "deployment_status": await conn.fetchval(
+                """SELECT d.status FROM deployments d JOIN builds b ON b.id = d.build_id
+                   WHERE b.artifact_digest=$1 AND d.installation_id=$2 ORDER BY d.created_at DESC LIMIT 1""",
+                artifact_digest, inst) if artifact_digest else None}
+
+
 @router.get("/services/{service_key}")
 async def get_service(service_key: str, p: SdkPrincipal = Depends(sdk), conn=Depends(db)):
     svc = await simulation.get_service(conn, p.customer_org_id, service_key)

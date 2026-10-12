@@ -8,13 +8,14 @@ import { useLive } from "@/components/ui/useLive";
 import { money, duration } from "@/lib/format";
 type Summary = { cost: { total_usd: number; by_source: Record<string, number>; input_tokens: number; output_tokens: number; provenance_note: string } };
 export default function Page() {
-  const { state, agentId } = useR2M();
+  const { state, agentId, base } = useR2M();
+  const { identity } = state;
   const m = useLive<{ summary: Summary }>(agentId ? `/agents/${agentId}/metrics?range=24h` : null)?.summary;
   const sources = Object.keys(m?.cost.by_source ?? {});
   return (
     <>
       <PageHeader
-        eyebrow="OpsPilot / Usage provenance"
+        eyebrow={`${state.identity.agent} / Usage provenance`}
         title="Cost & latency"
         description="Understand the cost of each execution—and what isn't measured."
         actions={<Badge tone={sources.length ? "green" : "gray"}>{sources.length ? `Cost source: ${sources.join(", ")}` : "No usage in 24 h"}</Badge>}
@@ -47,7 +48,7 @@ export default function Page() {
                 {state.runs.map((r) => (
                   <tr key={r.id}>
                     <td>
-                      <Link href={`/agents/opspilot/traces?trace=${r.traceId}`} className="table-link">{r.id} ↗</Link>
+                      <Link href={`${base}/traces?trace=${r.traceId}`} className="table-link">{r.id} ↗</Link>
                     </td>
                     <td>{r.modelCalls ?? 0}</td>
                     <td>{money(r.cost)}</td>

@@ -15,6 +15,10 @@ class R2MSim:
         r.raise_for_status()
         return r.json()
 
+    def context(self, artifact_digest: str | None = None) -> dict:
+        """Vendor, customer, environment and services this SDK token is scoped to, plus the build's release status."""
+        return self._json("GET", "/sim/context", params={"artifact_digest": artifact_digest} if artifact_digest else None)
+
     # ---- world (what mock_agent calls) ----
     def get_service(self, service_key: str = SERVICE) -> dict:
         return self._json("GET", f"/sim/services/{service_key}")

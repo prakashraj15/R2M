@@ -11,13 +11,13 @@ export default function Page() {
   const { state, role, dispatch } = useR2M();
   const [id, setId] = useState("");
   const build = state.builds.find((b) => b.id === id) ?? state.builds[0];
-  if (!build) return <p className="soft-note">No builds yet. Builds appear when OpsPilot registers and CI uploads evaluations.</p>;
+  if (!build) return <p className="soft-note">No builds yet. Builds appear when the agent registers and CI uploads evaluations.</p>;
   const checks = releaseChecks(state, build.id);
   const eligible = Object.values(checks).every(Boolean);
   return (
     <>
       <PageHeader
-        eyebrow="OpsPilot / Pre-deployment assurance"
+        eyebrow={`${state.identity.agent} / Pre-deployment assurance`}
         title="Build evaluations"
         description="Test the artifact before release. Runtime policy decisions live in traces."
         actions={<Badge tone="gray">Build / CI only</Badge>}
@@ -39,12 +39,16 @@ export default function Page() {
             </thead>
             <tbody>
               {state.builds.map((b) => (
-                <tr key={b.id} className={id === b.id ? "row-selected" : ""}>
+                <tr key={b.id} className={build.id === b.id ? "row-selected" : ""}>
                   <td>
                     <button className="table-link" onClick={() => setId(b.id)}>
                       {b.version}
                     </button>
-                    <small>Oct 11 · policy-regression-v1</small>
+                    <small>
+                      {b.evaluatedAt
+                        ? `${new Date(b.evaluatedAt).toLocaleString()} · ${b.suites?.join(", ")}`
+                        : "Awaiting CI evaluations"}
+                    </small>
                   </td>
                   <td>
                     <code>{b.digest}</code>
@@ -77,7 +81,7 @@ export default function Page() {
       </Panel>
       <div className="two-column section-gap">
         <Panel
-          title={`${build.version} · policy-regression-v1`}
+          title={`${build.version} · ${build.suites?.length ? build.suites.join(", ") : "no CI results yet"}`}
           subtitle="Expected versus actual for this build"
         >
           <div className="table-wrap">
@@ -110,7 +114,7 @@ export default function Page() {
           </div>
           <div className="panel-body">
             <Button
-              onClick={() => dispatch({ type: "evaluate", id })}
+              onClick={() => dispatch({ type: "evaluate", id: build.id })}
               disabled={!canEvaluate(role)}
             >
               Refresh CI results
@@ -145,6 +149,9 @@ export default function Page() {
                 </div>
               ))}
             </div>
+            {!!build.unapprovedPolicies?.length && (
+              <p className="helper">Awaiting customer approval: {build.unapprovedPolicies.join(", ")}</p>
+            )}
             <Badge>
               {build.deployed
                 ? "Deployed"
@@ -158,7 +165,7 @@ export default function Page() {
             </p>
             <Button
               disabled={!canDeploy(role) || build.deployed}
-              onClick={() => dispatch({ type: "evaluateRelease", id })}
+              onClick={() => dispatch({ type: "evaluateRelease", id: build.id })}
             >
               Evaluate release eligibility
             </Button>
@@ -170,7 +177,7 @@ export default function Page() {
                 !build.releaseEvaluated ||
                 build.deployed
               }
-              onClick={() => dispatch({ type: "deploy", id })}
+              onClick={() => dispatch({ type: "deploy", id: build.id })}
             >
               {build.deployed ? "Deployed" : "Deploy to production"}
             </Button>

@@ -26,7 +26,10 @@ async def approvals(status: str | None = None, a: Actor = Depends(actor), conn=D
         """SELECT 'runtime_action' AS kind, ra.id, ra.status, ra.requested_at, ra.expires_at, d.installation_id,
                   e.customer_org_id, a.tool_key, a.arguments, a.arguments_hash, e.trace_id, e.id AS execution_id,
                   ag.name AS agent_name, ag.id AS agent_id,
-                  (SELECT reason_code FROM policy_decisions pd WHERE pd.action_id = a.id LIMIT 1) AS reason_code
+                  (SELECT reason_code FROM policy_decisions pd WHERE pd.action_id = a.id LIMIT 1) AS reason_code,
+                  -- the policy whose decision required this approval (its approval must be in force to decide)
+                  (SELECT r.policy_key FROM policy_decisions pd JOIN policy_revisions r ON r.id = pd.revision_id
+                    WHERE pd.action_id = a.id ORDER BY (pd.decision = 'require_approval') DESC LIMIT 1) AS policy_key
            FROM runtime_approvals ra JOIN tool_actions a ON a.id = ra.action_id JOIN executions e ON e.id = a.execution_id
            JOIN deployments d ON d.id = e.deployment_id JOIN agent_installations i ON i.id = d.installation_id
            JOIN agents ag ON ag.id = i.agent_id

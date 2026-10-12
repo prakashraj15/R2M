@@ -32,6 +32,7 @@ export const emptyState = (): AppState => ({
   runs: [],
   service: { version: "Unknown", replicas: 0, cpu: 0, memory: 0, errorRate: 0, latency: 0, health: "Unknown" },
   audit: [],
+  identity: { agent: "", agentSlug: "", vendor: "", customer: "", environment: "", service: "" },
 });
 
 const health = (h?: string | null): Health =>
@@ -71,12 +72,22 @@ export async function loadControl(): Promise<{
   policies: Policy[];
   components: ComponentInfo[];
 }> {
-  const [ops, approvals] = await Promise.all([
+  const [ops, approvals, agents] = await Promise.all([
     request<Obj>("/operations/state"),
     request<Obj>("/approvals"),
+    request<Obj>("/agents"),
   ]);
   const agent = ops.agent_id as string;
   const inst = ops.installation_id as string;
+  const row: Obj = (agents.agents as Obj[]).find((a) => a.installation_id === inst) ?? {};
+  const identity = {
+    agent: row.name ?? "",
+    agentSlug: row.slug ?? "",
+    vendor: row.vendor_name ?? "",
+    customer: row.customer_name ?? "",
+    environment: row.environment ?? "",
+    service: (ops.services as Obj[])[0]?.service_key ?? "",
+  };
   const q = `installation_id=${inst}`;
   const [pol, deps, evals, traces, topo, evidence] = await Promise.all([
     request<Obj>(`/agents/${agent}/policies?${q}`),
@@ -90,25 +101,32 @@ export async function loadControl(): Promise<{
     (traces.traces as Obj[]).map((t) => request<Obj>(`/traces/${t.trace_id}`).catch(() => null)),
   );
 
-  const policies: Policy[] = (pol.policies as Obj[]).map((p) => {
+  // One row per policy: its latest revision (the endpoint returns newest first per key).
+  const revisions = pol.policies as Obj[];
+  const latest = revisions.filter((p, i) => revisions.findIndex((q) => q.policy_key === p.policy_key) === i);
+  const policies: Policy[] = latest.map((p) => {
     const active = (p.submissions as Obj[]).find((s) => s.active);
     const pending = (p.submissions as Obj[]).find((s) => s.status === "pending");
+    const activeElsewhere = revisions.find(
+      (q) => q.policy_key === p.policy_key && q.id !== p.id && (q.submissions as Obj[]).some((s) => s.active),
+    );
     return {
+      revisionId: p.id,
+      activeVersion: !active && activeElsewhere ? activeElsewhere.version : undefined,
+      canSubmit: !active && !pending,
       id: p.policy_key,
       name: p.description,
       version: p.version,
       description: p.description,
-      owner: p.owner_email || "Atlas Applied AI",
+      owner: p.owner_email || identity.vendor,
       hash: p.artifact_hash,
       hook: p.definition_metadata?.scope ? `${p.enforcement_point} · ${p.definition_metadata.scope}` : p.enforcement_point,
       tool: (p.definition_metadata?.tools || []).join(", "),
-      permission: active ? "Approved" : pending ? "Pending approval" : "Not approved",
+      permission: active ? "Approved" : pending ? "Pending approval" : "Not submitted",
       updated: String(p.created_at).slice(0, 10),
       review: active ? "Active" : "—",
     };
   });
-  const allPoliciesActive =
-    pol.policies.length > 0 && (pol.policies as Obj[]).every((p) => (p.submissions as Obj[]).some((s) => s.active));
 
   const runsByBuild = new Map<string, Obj[]>();
   for (const r of evals.runs as Obj[]) runsByBuild.set(r.build_id, [...(runsByBuild.get(r.build_id) || []), r]);
@@ -142,9 +160,14 @@ export async function loadControl(): Promise<{
       cases,
       deploymentId: d.id,
       deploymentStatus: d.status,
+      evaluatedAt: runs[0]?.started_at,
+      declaredPolicies: d.declared_policies,
+      unapprovedPolicies: d.unapproved_policies,
+      suites: [...latestBySuite.keys()],
       gate: {
         evaluations: tested && cases.every((c) => !c.mandatory || c.passed),
-        policies: allPoliciesActive,
+        // as the server's gate: the build declares policies and every one is approved here
+        policies: d.declared_policies.length > 0 && d.unapproved_policies.length === 0,
         artifact: true,
         scope: true,
       },
@@ -162,17 +185,19 @@ export async function loadControl(): Promise<{
           status: a.status === "approved" ? "approved" : a.status === "pending" ? "pending" : "rejected",
           requestedBy: a.submitted_by_email,
           digest: a.artifact_hash,
+          canDecide: a.can_decide,
         }
       : {
           id: a.id,
           kind: "action",
-          policy: a.reason_code || "runtime approval",
+          policy: a.policy_key || a.reason_code || "runtime approval",
           subject: `${a.tool_key} ${JSON.stringify(a.arguments)}`,
           description: `${a.reason_code || "Exact-action approval"} · ${a.agent_name}`,
           status: ["approved", "consumed"].includes(a.status) ? "approved" : a.status === "pending" ? "pending" : "rejected",
-          requestedBy: "OpsPilot",
+          requestedBy: a.agent_name,
           digest: a.arguments_hash,
           executionId: a.trace_id,
+          canDecide: a.can_decide,
         },
   );
 
@@ -183,6 +208,7 @@ export async function loadControl(): Promise<{
     builds,
     runs,
     service: mapService((ops.services as Obj[])[0]),
+    identity,
     audit: (evidence.items as Obj[]).map((e) => ({
       id: e.id,
       title: e.evidence_type.replaceAll("_", " "),
@@ -196,11 +222,11 @@ export async function loadControl(): Promise<{
 // The original canvas has six architecture nodes; live components (several tools, memory, database…) are grouped
 // into them with summed calls/errors, the worst p95 and the worst health. Missing telemetry stays Unknown.
 const GROUPS: [string, string, string, string[]][] = [
-  ["orchestrator", "OpsPilot orchestrator", "orchestrator", ["orchestrator"]],
+  ["orchestrator", "Orchestrator", "orchestrator", ["orchestrator"]],
   ["model", "Agent model", "model", ["model"]],
   ["gateway", "Policy gate (R2M SDK)", "gateway", ["gateway"]],
   ["tools", "Operations tools", "tool", ["tool"]],
-  ["service", "payments-api", "compute", ["compute"]],
+  ["service", "Managed service", "compute", ["compute"]],
   ["memory", "Memory & trace store", "storage", ["memory", "storage"]],
 ];
 const RANK: Health[] = ["Healthy", "Unknown", "Degraded", "Critical"];
@@ -216,7 +242,8 @@ function groupTopology(nodes: Obj[], service: Obj | undefined): ComponentInfo[] 
     if (id === "service" && service) h = health(service.health_status);
     return {
       id,
-      name,
+      // the registered component's own label, or the managed service's key, when there is exactly one
+      name: id === "service" && service ? service.service_key : members.length === 1 ? members[0].label : name,
       kind,
       description: members.length ? members.map((n) => n.label).join(", ") : "No registered component",
       health: h,
@@ -272,7 +299,7 @@ export async function deskRequest<T = Obj>(path: string, init?: RequestInit): Pr
     cache: "no-store",
   });
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new ApiError(r.status, { code: String(r.status), message: body.detail || body.message || `OpsPilot request failed (${r.status})`, request_id: "" });
+  if (!r.ok) throw new ApiError(r.status, { code: String(r.status), message: body.detail || body.message || `Agent request failed (${r.status})`, request_id: "" });
   return body as T;
 }
 
@@ -310,7 +337,7 @@ export function replyToExecution(prompt: string, scenario: Scenario, reply: Obj)
 }
 
 /** The desk's view of exact-action approvals, derived from the agent's own turns. */
-export function deskApprovals(runs: Execution[]): Approval[] {
+export function deskApprovals(runs: Execution[], agent: string): Approval[] {
   const byAction = new Map<string, Approval>();
   for (const run of [...runs].reverse()) {
     if (!run.actionId || !run.proposal) continue;
@@ -322,7 +349,7 @@ export function deskApprovals(runs: Execution[]): Approval[] {
       subject: `${run.proposal.tool} ${JSON.stringify(run.proposal.arguments)}`,
       description: (run.reasons || []).join(", "),
       status: run.decision === "ALLOW" ? "approved" : run.decision === "DENY" ? "rejected" : "pending",
-      requestedBy: "OpsPilot",
+      requestedBy: agent,
       digest: run.actionId,
       executionId: run.traceId,
     });

@@ -36,7 +36,7 @@ export function PolicyTable({
                   <button className="table-link" onClick={() => onSelect(p.id)}>
                     {p.name}
                   </button>
-                  <small>{p.id} · OpsPilot / Meridian</small>
+                  <small>{p.id} · {state.identity.agent} / {state.identity.customer}</small>
                 </td>
                 <td>v{p.version}</td>
                 <td>

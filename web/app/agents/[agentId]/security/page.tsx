@@ -12,7 +12,8 @@ type Incident = { id: string; severity: string; status: string; category: string
 type Coverage = { value: number | null; numerator: number; denominator: number; explanation: string };
 
 export default function Page() {
-  const { state, policies, agentId, notify } = useR2M();
+  const { state, policies, agentId, notify, base } = useR2M();
+  const { identity } = state;
   const [version, setVersion] = useState(0);
   const incidents = useLive<{ incidents: Incident[] }>(agentId ? `/agents/${agentId}/incidents?limit=50&v=${version}` : null)?.incidents ?? [];
   const coverage = useLive<{ summary: { policy_enforcement_coverage: Coverage } }>(agentId ? `/agents/${agentId}/metrics?range=24h` : null)
@@ -34,7 +35,7 @@ export default function Page() {
   return (
     <>
       <PageHeader
-        eyebrow="OpsPilot / Controls & findings"
+        eyebrow={`${state.identity.agent} / Controls & findings`}
         title="Security posture"
         description="Connect each declared guardrail to its policy, test, and runtime evidence."
       />
@@ -61,12 +62,12 @@ export default function Page() {
               {policies.map((p) => (
                 <tr key={p.id}>
                   <td>
-                    <Link className="table-link" href="/agents/opspilot/policies">{p.name}</Link>
+                    <Link className="table-link" href={`${base}/policies`}>{p.name}</Link>
                     <small>{p.id} · v{p.version} · {p.tool}</small>
                   </td>
                   <td>{p.hook}</td>
                   <td>
-                    <Link className="text-link" href="/agents/opspilot/evaluations">
+                    <Link className="text-link" href={`${base}/evaluations`}>
                       {deployed ? `${deployed.version} · ${evalsPassed ? "passed" : "not passed"} ↗` : "No deployed build ↗"}
                     </Link>
                   </td>
@@ -89,7 +90,7 @@ export default function Page() {
                   <h3>{i.category.replaceAll("_", " ")}</h3>
                   <p className="body-copy">{i.description} · {new Date(i.detected_at).toLocaleString()}</p>
                 </div>
-                {i.trace_id && <Link href={`/agents/opspilot/traces?trace=${i.trace_id}`} className="text-link">Trace →</Link>}
+                {i.trace_id && <Link href={`${base}/traces?trace=${i.trace_id}`} className="text-link">Trace →</Link>}
                 {i.status !== "resolved" && (
                   <button className="button" onClick={() => void resolve(i.id)}>Resolve</button>
                 )}
@@ -98,7 +99,7 @@ export default function Page() {
             {!incidents.length && <p className="body-copy">No findings recorded.</p>}
             <div className="soft-note">
               The faulty build demonstrates an unguarded rollback: the infrastructure refuses it, R2M opens a critical
-              incident, and the release gate blocks the build. <a className="text-link" href={DESK_URL}>Investigate in OpsPilot →</a>
+              incident, and the release gate blocks the build. <a className="text-link" href={DESK_URL}>Investigate in the operations desk →</a>
             </div>
           </div>
         </Panel>

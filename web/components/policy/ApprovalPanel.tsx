@@ -8,7 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Badge, Panel } from "@/components/ui/shared";
 export function ApprovalPanel({ approval }: { approval: Approval }) {
   const [reason, setReason] = useState("");
-  const { state, role, dispatch } = useR2M();
+  // One decision per click: locked until the refreshed approval arrives (a new id or status re-keys this state).
+  const [sentFor, setSentFor] = useState("");
+  const busy = sentFor === `${approval.id}:${approval.status}`;
+  const { state, role, dispatch, base } = useR2M();
+  const { identity } = state;
   const run = state.runs.find((r) => r.id === approval.executionId);
   const policyReady =
     approval.kind === "policy" ||
@@ -57,36 +61,38 @@ export function ApprovalPanel({ approval }: { approval: Approval }) {
             <div className="button-row">
               <Button
                 variant="default"
-                disabled={!canReview(role) || !reason.trim() || !policyReady}
-                onClick={() =>
+                disabled={busy || !canReview(role) || approval.canDecide === false || !reason.trim() || !policyReady}
+                onClick={() => {
+                  setSentFor(`${approval.id}:${approval.status}`);
                   dispatch({
                     type: "review",
                     id: approval.id,
                     decision: "approved",
                     reason,
-                  })
-                }
+                  });
+                }}
               >
                 Approve
               </Button>
               <Button
-                disabled={!canReview(role) || !reason.trim()}
-                onClick={() =>
+                disabled={busy || !canReview(role) || approval.canDecide === false || !reason.trim()}
+                onClick={() => {
+                  setSentFor(`${approval.id}:${approval.status}`);
                   dispatch({
                     type: "review",
                     id: approval.id,
                     decision: "rejected",
                     reason,
-                  })
-                }
+                  });
+                }}
               >
                 Reject
               </Button>
             </div>
             {!canReview(role) && (
               <p className="helper">
-                Switch organization to Meridian Financial and role to Security
-                reviewer to decide.
+                Only a security reviewer of {identity.customer} can decide. Sign in
+                with that account.
               </p>
             )}
             {!policyReady && (
@@ -105,7 +111,7 @@ export function ApprovalPanel({ approval }: { approval: Approval }) {
         {run && (
           <Link
             className="text-link"
-            href={`/agents/opspilot/traces?trace=${run.traceId}`}
+            href={`${base}/traces?trace=${run.traceId}`}
           >
             View associated execution →
           </Link>

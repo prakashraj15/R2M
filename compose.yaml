@@ -41,6 +41,8 @@ services:
       R2M_CONTROL_PLANE_URL: http://localhost:3000
       OPSPILOT_SDK_TOKEN: ${OPSPILOT_SDK_TOKEN:?issue one with scripts/sdk_token.py and put it in .env}
       OPSPILOT_SESSION_KEY: ${OPSPILOT_SESSION_KEY:?set a random 32+ character key in .env (signs desk sign-in cookies)}
+      # The agent version this container ships. Change it to release a new build (it starts as "proposed").
+      OPSPILOT_BUILD_VERSION: ${OPSPILOT_BUILD_VERSION:-safe-1.0}
       R2M_VENDOR_ORG_ID: b5333f96-384a-5bf6-9841-589df8574da5     # Atlas Applied AI (seed id)
       R2M_CUSTOMER_ORG_ID: 45a47bd0-ae2c-55b1-9bce-6a70902564e3   # Meridian Financial (seed id)
       R2M_ENVIRONMENT: production

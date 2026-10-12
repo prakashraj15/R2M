@@ -7,7 +7,8 @@ import { duration } from "@/lib/format";
 import { useR2M } from "@/components/R2MProvider";
 export function NodeInspector({ component }: { component: ComponentInfo }) {
   const [tab, setTab] = useState("Metrics");
-  const { state, policies } = useR2M();
+  const { state, policies, base } = useR2M();
+  const { identity } = state;
   const binding = ["tools", "gateway"].includes(component.id) ? policies : [];
   return (
     <aside className="panel inspector">
@@ -59,7 +60,7 @@ export function NodeInspector({ component }: { component: ComponentInfo }) {
           <div className="compact-events">
             {state.runs.slice(0, 3).map((r) => (
               <Link
-                href={`/agents/opspilot/traces?trace=${r.traceId}`}
+                href={`${base}/traces?trace=${r.traceId}`}
                 key={r.id}
               >
                 <strong>{r.id}</strong>
@@ -70,7 +71,7 @@ export function NodeInspector({ component }: { component: ComponentInfo }) {
         ) : tab === "Policies" ? (
           <>
             {binding.map((p) => (
-              <Link className="text-link" href="/agents/opspilot/policies" key={p.id}>
+              <Link className="text-link" href={`${base}/policies`} key={p.id}>
                 {p.id} · {p.permission} · {p.tool} ↗
               </Link>
             ))}

@@ -89,6 +89,6 @@ def llm_mode(context: dict[str, Any]) -> str:
 def handle_message(message: str, scenario: str, context: dict[str, Any]) -> dict[str, Any]:
     client = make_client(context)
     try:
-        return run_turn(client, message, scenario, context)
+        return run_turn(client, message, scenario, context, build_version=context.get("build_version", SAFE_VERSION))
     finally:
         client.close()

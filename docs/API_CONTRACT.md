@@ -57,13 +57,13 @@ Permissions by role: `GET /me` returns them per org. The source of truth is `PER
 | GET | `/organizations/{orgId}/overview?range=` | `metrics` (6 KPIs below), `agents` registry rows, `integrations` |
 | GET | `/agents` | list scoped installations (`POST /agents` is SDK registration, see below) |
 | GET | `/agents/{id}/topology?installation_id&range` | `nodes` (component + `metrics{calls,errors,p95_ms,cost_usd}` + `status` healthy/degraded/critical/unknown + `source`) and `edges` |
-| GET | `/agents/{id}/deployments` | deployments with build version and digests |
+| GET | `/agents/{id}/deployments` | deployments with build version and digests, plus `declared_policies` and `unapproved_policies` (`key@version`) as the release gate sees them |
 | POST | `/agents/{id}/releases/evaluate` | `{installation_id, build_version, artifact_digest}` → `{deployment_id, status: eligible\|blocked, eligible, checks{build_evals_passed, required_policies_approved, artifact_hash_matches, tenant_access_valid}, details}` (vendor_release_manager) |
 | POST | `/agents/{id}/deployments/{depId}/deploy` | re-checks the gate. 409 `release_blocked` unless eligible |
 | GET | `/agents/{id}/evaluations` | `runs[]` with build, suite, status, `mandatory_failure`, `cases[]` (expected/actual/trace_id/evidence_hash) |
 | GET | `/agents/{id}/policies` | revisions with hash, owner, `submissions[]` (status, `history[]`, `active`), `operational_decisions{allow,deny,require_approval}`, `coverage_caveat` |
 | POST | `/agents/{id}/policies/{revisionId}/submit` | `{installation_id, note?}` (vendor_developer) → `{submission_id, status: pending}` |
-| GET | `/approvals?status=` | mixed list. `kind: policy` (submission) or `runtime_action` (exact tool+arguments). Includes `can_decide` |
+| GET | `/approvals?status=` | mixed list. `kind: policy` (submission) or `runtime_action` (exact tool+arguments, with `policy_key`: the policy that required approval, whose own approval must be in force). Includes `can_decide` |
 | POST | `/approvals/{id}/decision` | `{decision: approve\|reject\|revoke, reason?}` (customer_security, never the submitter). Runtime approvals take approve/reject only |
 | GET | `/agents/{id}/traces?limit&cursor` | runs: execution/trace ids, status, scenario, build, span/decision counts, cost |
 | GET | `/traces/{traceId}` | `execution`, `spans[]` (with `depth` for the waterfall), `events[]`, `actions[]`, `decisions[]`, `grants[]` (never the token), `approvals[]`, `usage[]`, `insights[]`, `redacted_for_customer` |
@@ -121,6 +121,7 @@ OpsPilot runs in its **own container** and reaches R2M only over HTTP, through t
 
 | Method | Path | Body / result |
 |---|---|---|
+| GET | `/sim/context?artifact_digest=` | `{vendor_name, customer_name, installation_id, environment, services, deployment_status}`: who the token serves, and the release status of the given build (`null` if it isn't registered) |
 | GET | `/sim/services/{service_key}` | Simulated service state: `deployment_version, previous_version, replicas, cpu_pct, memory_pct, error_rate_pct, p95_latency_ms, health_status` |
 | GET | `/sim/services/{service_key}/history` | `{actions: [...]}`: the last 20 simulated actions (`authorized` true or false) |
 | POST | `/sim/services/{service_key}/actions` | `{tool, changes, execution_id}` → `{applied: true, action_id, before, after}`, or `{applied: false, reason, incident_id}` |
@@ -138,7 +139,7 @@ The desk proxies `/agent-api/*` to this private listener, `127.0.0.1:8100`.
 | GET | `/agent-api/health` | `{status, configured}` (no sign-in) |
 | POST/DELETE | `/agent-api/session` | sign in with an R2M `{email, password}` (checked against R2M once; sets the signed `opspilot_session` cookie) / sign out |
 | GET | `/agent-api/me` | `{email, name, role, organization, can_instruct}` |
-| GET | `/agent-api/state` | `{service, history, scenarios, control_plane_url}` |
+| GET | `/agent-api/state` | `{service, history, scenarios, build: {version, artifact_digest, deployment_status}, identity: {agent, agent_slug, vendor, customer, environment}, control_plane_url}` |
 | POST | `/agent-api/message` | `{message, scenario: healthy\|degraded\|approval\|faulty}` → the agent's reply: `decision, reasons, steps, proposal, keewano, trace_id, action_id, approval_id`. The acting user and role come from the session; `customer_security` is read-only (403) |
 | POST | `/agent-api/scenarios/{id}/reset` | Proxies `/sim/scenarios/{id}/reset` |
 

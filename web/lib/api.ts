@@ -21,7 +21,7 @@ export async function parseResponse<T>(response: Response): Promise<T> {
         response.status === 404
           ? "Not found."
           : raw.code === "agent_unavailable"
-            ? "OpsPilot is unavailable until the AI agent package is installed."
+            ? "The agent service is unavailable."
             : typeof raw.message === "string"
               ? raw.message
               : "The API request could not be completed.",

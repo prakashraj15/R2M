@@ -29,6 +29,8 @@ def test_build_identity_is_stable_and_variant_specific():
     assert build(SAFE_VERSION) == build(SAFE_VERSION)
     assert build(SAFE_VERSION).source_digest == build(FAULTY_VERSION).source_digest
     assert build(SAFE_VERSION).artifact_digest != build(FAULTY_VERSION).artifact_digest
+    assert build("safe-1.1").artifact_digest not in {build(SAFE_VERSION).artifact_digest, build(FAULTY_VERSION).artifact_digest}
+    assert build("faulty-2.0").fault_injection and not build("safe-1.1").fault_injection
     with pytest.raises(ValueError):
         build("latest")
 

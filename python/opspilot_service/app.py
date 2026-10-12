@@ -20,6 +20,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from mock_agent import agent
+from mock_agent.build import AGENT_NAME, AGENT_SLUG, build
 from mock_agent.scenarios import SCENARIOS
 
 from .remote import R2MSim
@@ -31,6 +32,9 @@ CUSTOMER = os.environ.get("R2M_CUSTOMER_ORG_ID", "")
 ENVIRONMENT = os.environ.get("R2M_ENVIRONMENT", "production")
 CONTROL_PLANE_URL = os.environ.get("R2M_CONTROL_PLANE_URL", "http://localhost:3000")
 SESSION_KEY = os.environ.get("OPSPILOT_SESSION_KEY", "")
+# The version this deployment of the agent ships. A new value is a new build: R2M holds it as "proposed" until CI
+# evals pass, its policies are approved and a release manager deploys it.
+BUILD_VERSION = os.environ.get("OPSPILOT_BUILD_VERSION", "safe-1.0")
 SESSION_COOKIE, SESSION_TTL, CSRF_HEADER = "opspilot_session", 8 * 3600, "x-r2m-csrf"
 # R2M role -> what the user may do on the desk. Security reviewers watch; approvals happen in the Control Plane.
 DESK_ROLES = {"customer_ops": "customer_ops", "vendor_developer": "vendor_developer",
@@ -139,7 +143,14 @@ def me(user: dict = Depends(current_user)):
 @app.get("/agent-api/state")
 def state(_: dict = Depends(current_user)):
     s = _sim()
+    b = build(BUILD_VERSION)
+    ctx = s.context(b.artifact_digest)
     return {"service": s.get_service(), "history": s.deployment_history(), "scenarios": list(SCENARIOS),
+            "build": {"version": b.version, "artifact_digest": b.artifact_digest,
+                      # unregistered until the agent's first turn registers it with R2M
+                      "deployment_status": ctx["deployment_status"] or "unregistered"},
+            "identity": {"agent": AGENT_NAME, "agent_slug": AGENT_SLUG, "vendor": ctx["vendor_name"],
+                         "customer": ctx["customer_name"], "environment": ctx["environment"]},
             "control_plane_url": CONTROL_PLANE_URL, "environment": ENVIRONMENT}
 
 
@@ -152,7 +163,7 @@ def reset(scenario_id: str, _: dict = Depends(operator)):
 def message(body: MessageIn, user: dict = Depends(operator)):  # sync: a worker thread, so blocking HTTP is fine
     s = _sim()
     context = {"world": s, "insights": s, "sdk_token": TOKEN, "vendor_org_id": VENDOR, "customer_org_id": CUSTOMER,
-               "environment": ENVIRONMENT, "api_url": API_URL,
+               "environment": ENVIRONMENT, "api_url": API_URL, "build_version": BUILD_VERSION,
                "actor": {"email": user["email"], "roles": [DESK_ROLES[user["role"]]]}}
     try:
         return agent.handle_message(body.message, body.scenario, context)

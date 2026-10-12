@@ -10,8 +10,8 @@ export function ServiceStatus() {
       <div className="service-icon">
         <Server size={23} />
       </div>
-      <h3>payments-api</h3>
-      <p>Meridian Financial · production</p>
+      <h3>{state.identity.service}</h3>
+      <p>{state.identity.customer} · {state.identity.environment}</p>
       <Badge>{s.health}</Badge>
       <div className="service-metrics">
         <div>

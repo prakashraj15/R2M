@@ -56,7 +56,16 @@ async def list_agents(conn, installations: list[dict]) -> list[dict]:
 async def deployments(conn, installation_ids: list[UUID]) -> list[dict]:
     rows = await conn.fetch(
         """SELECT d.id, d.installation_id, d.status, d.deployed_at, d.created_at, b.id AS build_id, b.version,
-                  b.source_digest, b.artifact_digest
+                  b.source_digest, b.artifact_digest,
+                  -- the build's policy manifest and which of it this installation has not approved (as the gate sees it)
+                  (SELECT coalesce(array_agg(bp.policy_key || '@' || r.version ORDER BY bp.policy_key), '{}')
+                     FROM build_policies bp JOIN policy_revisions r ON r.id = bp.revision_id
+                    WHERE bp.build_id = b.id) AS declared_policies,
+                  (SELECT coalesce(array_agg(bp.policy_key || '@' || r.version ORDER BY bp.policy_key), '{}')
+                     FROM build_policies bp JOIN policy_revisions r ON r.id = bp.revision_id
+                    WHERE bp.build_id = b.id AND NOT EXISTS (
+                          SELECT 1 FROM policy_activations pa WHERE pa.installation_id = d.installation_id
+                             AND pa.revision_id = bp.revision_id AND pa.active)) AS unapproved_policies
            FROM deployments d JOIN builds b ON b.id = d.build_id
            WHERE d.installation_id = ANY($1::uuid[]) ORDER BY d.created_at DESC""", installation_ids)
     return [dict(r) for r in rows]

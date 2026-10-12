@@ -10,18 +10,19 @@ import { PageHeader, Panel, Badge } from "@/components/ui/shared";
 import { cp } from "@/lib/live-adapter";
 export function OperationsDesk() {
   const [scenario, setScenario] = useState<Scenario>("rollback");
-  const { state, reset } = useR2M();
+  const { state, reset, base } = useR2M();
+  const { identity } = state;
   const action = state.approvals.find((a) => a.kind === "action");
   const latest = state.runs[0];
   const insight = state.runs.find((r) => r.insight)?.insight;
   return (
     <>
       <PageHeader
-        eyebrow="Atlas Applied AI / OpsPilot"
-        title="OpsPilot operations desk"
-        description="Ask OpsPilot about payments-api. Every change it proposes is decided by your R2M policies."
+        eyebrow={`${identity.vendor} / ${identity.agent}`}
+        title={`${identity.agent} operations desk`}
+        description={`Ask ${identity.agent} about ${identity.service}. Every change it proposes is decided by your R2M policies.`}
         actions={
-          <a href={cp("/agents/opspilot")} className="button">
+          <a href={cp(base)} className="button">
             View in R2M ↗
           </a>
         }
@@ -33,7 +34,7 @@ export function OperationsDesk() {
             scenario={scenario}
             onChange={(s) => {
               setScenario(s);
-              reset(s); // live: put payments-api into this scenario's baseline
+              reset(s); // live: put the service into this scenario's baseline
             }}
           />
         </aside>
@@ -54,7 +55,7 @@ export function OperationsDesk() {
                   <p className="body-copy">{action.description}</p>
                   <pre>
                     {JSON.stringify(
-                      { ...(latest?.proposal ?? {}), service: "payments-api", trace: action.executionId },
+                      { ...(latest?.proposal ?? {}), service: identity.service, trace: action.executionId },
                       null,
                       2,
                     )}
@@ -88,7 +89,7 @@ export function OperationsDesk() {
                   <p className="body-copy">
                     {insight.supported
                       ? `Past outcomes support this remediation (${insight.sample_count ?? "?"} incidents). Advisory only: the R2M policy still decides.`
-                      : "Not enough history; OpsPilot uses the safe fallback and does not claim a Keewano-informed recommendation."}
+                      : "Not enough history; the agent uses the safe fallback and does not claim a Keewano-informed recommendation."}
                   </p>
                   <pre>{JSON.stringify(insight, null, 2).slice(0, 600)}</pre>
                 </>
@@ -96,7 +97,7 @@ export function OperationsDesk() {
                 <>
                   <Badge tone="gray">Not consulted yet</Badge>
                   <p className="body-copy">
-                    OpsPilot asks Keewano which past fix worked when payments-api is degraded.
+                    {identity.agent} asks Keewano which past fix worked when {identity.service} is degraded.
                   </p>
                 </>
               )}

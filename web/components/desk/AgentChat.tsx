@@ -16,11 +16,14 @@ import { Button } from "@/components/ui/button";
 import { cp } from "@/lib/live-adapter";
 import { motion } from "@/components/ui/motion";
 export function AgentChat({ scenario }: { scenario: Scenario }) {
-  const { state, role, dispatch } = useR2M();
+  const { state, role, dispatch, base } = useR2M();
+  const { identity } = state;
   const [input, setInput] = useState("");
   const messages = state.runs.filter((run) => run.prompt).toReversed();
   const pending = state.runs.some((run) => run.status === "waiting_approval");
-  const released = state.builds.some((build) => build.deployed);
+  // R2M, not the browser, enforces release: an unreleased build may chat and observe, but every change is denied.
+  const build = state.builds[0];
+  const released = build?.deploymentStatus === "deployed";
   function send() {
     if (
       input.trim() &&
@@ -36,7 +39,7 @@ export function AgentChat({ scenario }: { scenario: Scenario }) {
             <div className="agent-avatar large">
               <Bot size={30} />
             </div>
-            <h2>Meet OpsPilot.</h2>
+            <h2>Meet {identity.agent}.</h2>
             <p>
               Observe the service. Understand the issue.
               <br />
@@ -60,7 +63,7 @@ export function AgentChat({ scenario }: { scenario: Scenario }) {
               <Bot size={18} />
               <div>
                 <strong>
-                  OpsPilot <small>{run.id}</small>
+                  {identity.agent} <small>{run.id}</small>
                 </strong>
                 <p>{run.recommendation}</p>
                 <div className="chat-timeline">
@@ -91,7 +94,7 @@ export function AgentChat({ scenario }: { scenario: Scenario }) {
                   </a>
                 )}
                 {run.traceId && (
-                  <a className="text-link" href={cp(`/agents/opspilot/traces?trace=${run.traceId}`)}>
+                  <a className="text-link" href={cp(`${base}/traces?trace=${run.traceId}`)}>
                     Open R2M trace ↗
                   </a>
                 )}
@@ -108,32 +111,32 @@ export function AgentChat({ scenario }: { scenario: Scenario }) {
           }}
         >
           <input
-            aria-label="Message OpsPilot"
+            aria-label={`Message ${identity.agent}`}
             value={input}
             maxLength={2000}
             onChange={(event) => setInput(event.target.value)}
             placeholder={
               pending
                 ? "After approving in R2M, say “approved, continue”…"
-                : "Ask OpsPilot to inspect payments-api…"
+                : `Ask ${identity.agent} to inspect ${identity.service}…`
             }
-            disabled={!canRun(role) || !released}
+            disabled={!canRun(role)}
           />
           <Button
             variant="default"
             aria-label="Send message"
-            disabled={!canRun(role) || !released || !input.trim()}
+            disabled={!canRun(role) || !input.trim()}
             type="submit"
           >
             <ArrowUp size={18} />
           </Button>
         </form>
         <p>
-          {!released
-            ? "Build proposed: complete build evaluations, policy approval and release before sending a message."
-            : !canRun(role)
-              ? "Security reviewers approve in R2M; switch to Operations or Atlas developer to chat."
-              : `Live agent · scenario: ${scenario}. Replies can take up to 40 s.`}
+          {!canRun(role)
+            ? `Your role can watch ${identity.agent} but not instruct it; approvals happen in the R2M control plane.`
+            : build && !released
+              ? `Build ${build.version} is ${build.deploymentStatus} in R2M: ${identity.agent} can observe, but every change is denied until a release manager deploys it.`
+              : `Live agent · build ${build?.version ?? "…"} · scenario: ${scenario}. Replies can take up to 40 s.`}
         </p>
       </div>
     </div>

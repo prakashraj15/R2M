@@ -45,7 +45,7 @@ test("404 remains not found and agent_unavailable remains a failure", async () =
     (e: unknown) =>
       e instanceof ApiError &&
       e.status === 503 &&
-      e.message.includes("AI agent package"),
+      e.message.includes("agent service is unavailable"),
   );
   assert.equal(
     await parseResponse(new Response(null, { status: 204 })),

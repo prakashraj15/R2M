@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { downloadJSON } from "@/lib/format";
 import { api } from "@/lib/api";
 export default function Page() {
-  const { state, agentId, notify } = useR2M();
+  const { state, agentId, notify, base } = useR2M();
+  const { identity } = state;
   // The bundle is built server-side: every item with its SHA-256, plus a manifest hash over the whole bundle.
   async function exportEvidence() {
     try {
@@ -20,7 +21,7 @@ export default function Page() {
   return (
     <>
       <PageHeader
-        eyebrow="OpsPilot / Responsibility record"
+        eyebrow={`${state.identity.agent} / Responsibility record`}
         title="Evidence library"
         description="Connect the policy, reviewer, build, execution, and outcome."
         actions={
@@ -93,7 +94,7 @@ export default function Page() {
                   <td>
                     <Link
                       className="text-link"
-                      href={`/agents/opspilot/traces?trace=${r.traceId}`}
+                      href={`${base}/traces?trace=${r.traceId}`}
                     >
                       Inspect ↗
                     </Link>
