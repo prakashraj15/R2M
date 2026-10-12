@@ -20,8 +20,9 @@ import {
   Inbox,
   ArrowUpRight,
   PlugZap,
+  Building2,
 } from "lucide-react";
-import { OrgSwitcher } from "./OrgSwitcher";
+import { roleNames } from "@/lib/permissions";
 import { BrandMark } from "@/components/brand/BrandMark";
 import { useR2M } from "@/components/R2MProvider";
 const agent = "/agents/opspilot";
@@ -41,7 +42,8 @@ const links = [
 ] as const;
 export function Sidebar() {
   const path = usePathname();
-  const { state, org, role } = useR2M();
+  const { state, role, user } = useR2M();
+  const initials = (user?.organization ?? "").split(" ").map((w) => w[0]).join("").slice(0, 2);
   const count = state.approvals.filter((a) => a.status === "pending").length;
   return (
     <aside className="sidebar">
@@ -50,7 +52,10 @@ export function Sidebar() {
         <span className="beta">BETA</span>
       </Link>
       <div className="brand-caption">RESPONSIBILITY TO MONITORING</div>
-      <OrgSwitcher />
+      <div className="org-switch" title="Your organization">
+        <Building2 size={17} />
+        <span>{user?.organization ?? "…"}</span>
+      </div>
       <div className="nav-label">CONTROL PLANE</div>
       <nav aria-label="Organization navigation">
         <Link className={path === "/" ? "active" : ""} href="/">
@@ -89,10 +94,10 @@ export function Sidebar() {
           <ArrowUpRight size={14} />
         </a>
         <div className="profile">
-          <div className="avatar">{org === "atlas" ? "AA" : "MF"}</div>
+          <div className="avatar">{initials}</div>
           <div>
-            {org === "atlas" ? "Atlas Applied AI" : "Meridian Financial"}
-            <small>{role.replaceAll("_", " ")}</small>
+            {user?.name ?? "…"}
+            <small>{roleNames[role]}</small>
           </div>
         </div>
       </div>

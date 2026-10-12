@@ -1,11 +1,10 @@
 "use client";
-// Live data provider for the original screens. The name and the useR2M() hook are kept so every screen renders
-// unchanged, but nothing here is mock: the Control Plane reads/writes the R2M platform (signed demo session), and
-// the Operations Desk talks to the separate OpsPilot agent service.
+// Live data for every screen. The Control Plane reads/writes the R2M platform with the user's signed session; the
+// Operations Desk talks to the separate OpsPilot agent service, which has its own sign-in backed by R2M accounts.
+// Who you are and what you may do comes from the server (/me), never from a picker in the browser.
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, ApiError, request } from "@/lib/api";
+import { api, ApiError, request, type Session } from "@/lib/api";
 import { type Command } from "@/lib/release";
-import { rolesFor } from "@/lib/permissions";
 import {
   APP,
   deskApprovals,
@@ -18,12 +17,8 @@ import {
 } from "@/lib/live-adapter";
 import type { ComponentInfo, Execution, AppState, Organization, Policy, Role, Scenario } from "@/lib/types";
 
-const EMAIL: Record<Role, string> = {
-  vendor_developer: "dev@atlas.demo",
-  vendor_release_manager: "release@atlas.demo",
-  customer_security: "security@meridian.demo",
-  customer_ops: "ops@meridian.demo",
-};
+// When an account holds several roles, the most privileged reviewer/release role wins the view.
+const ROLE_ORDER: Role[] = ["customer_security", "customer_ops", "vendor_release_manager", "vendor_developer"];
 const ORG_OF: Record<Role, Organization> = {
   vendor_developer: "atlas",
   vendor_release_manager: "atlas",
@@ -35,8 +30,8 @@ interface Context {
   state: AppState;
   role: Role;
   org: Organization;
-  setRole: (role: Role) => void;
-  setOrg: (org: Organization) => void;
+  user: { name: string; email: string; organization: string } | null;
+  signOut: () => void;
   dispatch: (command: Command) => boolean;
   notify: (message: string) => void;
   reset: (scenario?: Scenario) => void;
@@ -48,7 +43,11 @@ interface Context {
 }
 const R2MContext = createContext<Context | null>(null);
 const errorText = (e: unknown) =>
-  e instanceof ApiError ? `${e.message} (${e.body.code})` : e instanceof Error ? e.message : "Request failed.";
+  e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Request failed.";
+const unauthorized = (e: unknown) => e instanceof ApiError && e.status === 401;
+const toLogin = () =>
+  window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+const onLogin = () => typeof window !== "undefined" && window.location.pathname === "/login";
 
 export function R2MProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(emptyState);
@@ -57,6 +56,7 @@ export function R2MProvider({ children }: { children: ReactNode }) {
   const [agentId, setAgentId] = useState("");
   const [installationId, setInstallationId] = useState("");
   const [role, updateRole] = useState<Role>(APP === "desk" ? "customer_ops" : "vendor_developer");
+  const [user, setUser] = useState<Context["user"]>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const deskRuns = useRef<Execution[]>([]);
@@ -79,40 +79,47 @@ export function R2MProvider({ children }: { children: ReactNode }) {
         setInstallationId(live.installationId);
       }
     } catch (e) {
+      if (unauthorized(e)) return toLogin();
       setMessage(`Live data unavailable: ${errorText(e)}`);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Control Plane: the role switcher is a real sign-in as the matching seeded demo identity.
-  const signInAs = useCallback(async (next: Role) => {
-    updateRole(next);
-    if (APP === "control") {
-      try {
-        await api.signIn(EMAIL[next]);
-      } catch (e) {
-        setMessage(`Sign-in failed: ${errorText(e)}`);
-      }
-    }
-    await refresh();
-  }, [refresh]);
-
   useEffect(() => {
+    if (onLogin()) return setLoading(false);
     void (async () => {
-      if (APP === "control") {
-        try {
-          const me = await api.me();
-          const current = (Object.keys(EMAIL) as Role[]).find((r) => EMAIL[r] === me.user.email);
-          if (current) updateRole(current);
-          else await api.signIn(EMAIL.vendor_developer);
-        } catch {
-          await api.signIn(EMAIL.vendor_developer).catch(() => undefined);
+      try {
+        if (APP === "control") {
+          const me: Session = await api.me();
+          const roles = me.organizations.flatMap((o) => o.roles);
+          const r = ROLE_ORDER.find((x) => roles.includes(x));
+          if (!r) throw Error("This account has no role in the R2M Control Plane.");
+          updateRole(r);
+          const org = me.organizations.find((o) => o.roles.includes(r));
+          setUser({ name: me.user.display_name, email: me.user.email, organization: org?.name ?? "" });
+        } else {
+          const me = await deskRequest<{ name: string; email: string; organization: string; role: Role }>("/me");
+          updateRole(me.role);
+          setUser({ name: me.name, email: me.email, organization: me.organization });
         }
+      } catch (e) {
+        if (unauthorized(e)) return toLogin();
+        setMessage(errorText(e));
+        return setLoading(false);
       }
       await refresh();
     })();
   }, [refresh]);
+
+  async function signOut() {
+    try {
+      if (APP === "desk") await deskRequest("/session", { method: "DELETE" });
+      else await api.signOut();
+    } finally {
+      window.location.assign("/login");
+    }
+  }
 
   async function run(command: Command) {
     switch (command.type) {
@@ -147,11 +154,10 @@ export function R2MProvider({ children }: { children: ReactNode }) {
       case "run": {
         if (APP !== "desk") throw Error("Chat with OpsPilot in the Operations Desk app.");
         setMessage("OpsPilot is working (live model + R2M policy gate)…");
-        const operator = role.startsWith("vendor_") ? "vendor_developer" : "customer_ops";
         const prompt = command.prompt || "How is payments-api doing?";
         const reply = await deskRequest("/message", {
           method: "POST",
-          body: JSON.stringify({ message: prompt, scenario: toLiveScenario(command.scenario), operator }),
+          body: JSON.stringify({ message: prompt, scenario: toLiveScenario(command.scenario) }),
         });
         deskRuns.current = [replyToExecution(prompt, command.scenario, reply), ...deskRuns.current];
         setMessage(reply.decision ? `R2M decision: ${reply.decision}` : "Reply received.");
@@ -162,7 +168,7 @@ export function R2MProvider({ children }: { children: ReactNode }) {
   }
 
   function dispatch(command: Command) {
-    void run(command).catch((e) => setMessage(errorText(e)));
+    void run(command).catch((e) => (unauthorized(e) ? toLogin() : setMessage(errorText(e))));
     return true;
   }
 
@@ -183,8 +189,8 @@ export function R2MProvider({ children }: { children: ReactNode }) {
         state,
         role,
         org: ORG_OF[role],
-        setRole: (next) => void signInAs(next),
-        setOrg: (org) => void signInAs(rolesFor[org][0]),
+        user,
+        signOut: () => void signOut(),
         dispatch,
         notify: setMessage,
         reset: (scenario) => void doReset(scenario).catch((e) => setMessage(errorText(e))),

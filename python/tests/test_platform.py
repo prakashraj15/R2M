@@ -8,7 +8,7 @@ import anyio.to_thread
 import asyncpg
 import httpx
 import pytest
-from conftest import CSRF, bypass, reset_db
+from conftest import CSRF, PASSWORD, bypass, reset_db
 from r2m.approvals import ActionGrant, GrantVerifier, arguments_hash
 from seed_demo import uid
 
@@ -50,7 +50,7 @@ async def app():
 
 async def login(app, email: str) -> httpx.AsyncClient:
     c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=CSRF)
-    r = await c.post("/api/v1/auth/session", json={"email": email})
+    r = await c.post("/api/v1/auth/session", json={"email": email, "password": PASSWORD})
     assert r.status_code == 200, r.text
     return c
 
@@ -91,7 +91,12 @@ async def test_requires_session_and_sdk_token(app):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=CSRF) as c:
         assert (await c.get("/api/v1/me")).status_code == 401
         assert (await c.post("/api/v1/ingest/events", json={"events": []})).status_code == 401
-        assert (await c.post("/api/v1/auth/session", json={"email": "intruder@evil.test"})).status_code == 401
+        assert (await c.post("/api/v1/auth/session", json={"email": "intruder@evil.test", "password": PASSWORD})).status_code == 401
+        wrong = {"email": "ops@meridian.demo", "password": "not-the-password"}
+        assert [(await c.post("/api/v1/auth/session", json=wrong)).status_code for _ in range(6)] == [401] * 5 + [429]
+        locked = {"email": "ops@meridian.demo", "password": PASSWORD}  # per-account lockout holds for the right password
+        assert (await c.post("/api/v1/auth/session", json=locked)).status_code == 429
+        assert (await c.post("/api/v1/auth/session", json={"email": "dev@atlas.demo", "password": PASSWORD})).status_code == 200
         c.cookies.set("r2m_session", "forged.signature")
         assert (await c.get("/api/v1/me")).status_code == 401
         for bad in ("not-a-token", "r2m_sdk_" + "0" * 32 + "_" + "f" * 64):  # wrong format / forged HMAC
@@ -343,23 +348,26 @@ async def test_sdk_tokens_are_customer_scoped_and_revocable(app):
 
 
 async def test_row_level_security_blocks_unscoped_queries(app):
-    from r2m_platform.auth import load_actor
+    from r2m_platform.auth import hash_password, load_actor, password_version
     await make_trace(app)
     async with app.state.pool.acquire() as conn:
+        # conftest gives every seeded user one shared hash; a session minted for any other hash is refused.
+        pv = password_version(await conn.fetchval("SELECT password_hash FROM users LIMIT 1"))
+        assert await load_actor(conn, uid("user", "ops@meridian.demo"), password_version(hash_password(PASSWORD))) is None
         assert await conn.fetchval("SELECT current_user") == "r2m_app"
         # A query that "forgets" its tenant filter sees nothing without a scope...
         assert await conn.fetchval("SELECT count(*) FROM executions") == 0
         assert await conn.fetchval("SELECT count(*) FROM simulation_services") == 0
         # ...and only its own tenant's rows with one.
-        await load_actor(conn, uid("user", "security@northwind.demo"))
+        await load_actor(conn, uid("user", "security@northwind.demo"), pv)
         assert await conn.fetchval("SELECT count(*) FROM executions") == 0
         assert await conn.fetchval("SELECT count(*) FROM simulation_services") == 1
         with pytest.raises(asyncpg.InsufficientPrivilegeError):  # can't write into another tenant either
             await conn.execute("INSERT INTO incidents(installation_id, severity, category, description) "
                                "VALUES ($1, 'low', 'x', 'x')", M_INST)
-        await load_actor(conn, uid("user", "ops@meridian.demo"))
+        await load_actor(conn, uid("user", "ops@meridian.demo"), pv)
         assert await conn.fetchval("SELECT count(*) FROM executions") == 1
-        await load_actor(conn, uid("user", "release@atlas.demo"))  # vendor: both linked customers' simulations
+        await load_actor(conn, uid("user", "release@atlas.demo"), pv)  # vendor: both linked customers' simulations
         assert await conn.fetchval("SELECT count(*) FROM simulation_services") == 2
 
 
@@ -376,8 +384,8 @@ async def test_csrf_header_and_rate_limits(app):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=CSRF) as c:
         spoof = [{"x-forwarded-for": f"10.0.0.{i}"} for i in range(21)]  # rotating XFF must not reset the limit
         with mock.patch.dict("r2m_platform.guards.ROUTE_LIMITS", {("POST", "/api/v1/auth/session"): ("login", 20)}):
-            codes = [(await c.post("/api/v1/auth/session", json={"email": "nobody@x.test"}, headers=h)).status_code
-                     for h in spoof]
+            codes = [(await c.post("/api/v1/auth/session", json={"email": f"nobody{i}@x.test", "password": "x"}, headers=h)).status_code
+                     for i, h in enumerate(spoof)]
     assert codes[:19] == [401] * 19 and set(codes[19:]) == {429}  # login limit (patched to 20), incl. the login above
 
     from types import SimpleNamespace

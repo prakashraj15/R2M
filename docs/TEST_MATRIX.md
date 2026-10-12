@@ -14,7 +14,7 @@ This maps the acceptance criteria in DEVELOPER_SPEC §12 to the checks that prov
 |---|---|---|
 | Platform | `TEST_DATABASE_URL=postgresql://…/r2m_test pytest python/tests` | a **disposable** Postgres (its schema is wiped) |
 | SDK | `cd python/r2m_sdk && pytest` | nothing |
-| Smoke (HTTP) | `python scripts/smoke_test.py --base http://127.0.0.1:3000` | a running container or API |
+| Smoke (HTTP) | `python scripts/smoke_test.py --base http://127.0.0.1:3000 --accounts secrets/accounts.txt` | a running container or API |
 
 ## Acceptance criteria (§12)
 
@@ -37,7 +37,7 @@ This maps the acceptance criteria in DEVELOPER_SPEC §12 to the checks that prov
 
 | Case | Where |
 |---|---|
-| No session, forged cookie, non-allowlisted identity, missing or wrong SDK token | `test_requires_session_and_sdk_token`, smoke test |
+| No session, forged cookie, unknown account, wrong password, per-account lockout, stale session after a password change, missing or wrong SDK token | `test_requires_session_and_sdk_token`, smoke test |
 | SDK registers a vendor/customer pair that isn't linked → 403 | `test_cross_tenant_direct_object_references` |
 | Authorize with another tenant's org → `TENANT_SCOPE_INVALID` | same |
 | SDK registration never auto-deploys new code | `test_sdk_agent_registration_never_auto_deploys` |

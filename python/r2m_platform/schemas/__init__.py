@@ -12,8 +12,9 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class DemoSessionIn(Strict):
+class SessionIn(Strict):
     email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=256)
 
 
 class Lenient(BaseModel):

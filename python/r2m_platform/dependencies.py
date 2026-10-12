@@ -24,10 +24,10 @@ def settings() -> Settings:
 
 async def actor(request: Request, conn=Depends(db), cfg: Settings = Depends(settings)) -> Actor:
     token = request.cookies.get(SESSION_COOKIE)
-    user_id = verify_session(cfg.session_signing_key, token) if token else None
-    found = await load_actor(conn, user_id) if user_id else None
+    session = verify_session(cfg.session_signing_key, token) if token else None
+    found = await load_actor(conn, *session) if session else None
     if not found:
-        raise ApiError(401, "unauthenticated", "sign in with a demo identity")
+        raise ApiError(401, "unauthenticated", "sign in to continue")
     current_scope.set(found[1])
     return found[0]
 

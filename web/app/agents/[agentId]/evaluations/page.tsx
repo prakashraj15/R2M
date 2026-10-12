@@ -117,7 +117,7 @@ export default function Page() {
             </Button>
             {!canEvaluate(role) && (
               <p className="helper">
-                Choose Atlas Applied AI · Release manager to run or promote
+                Sign in as a release manager to evaluate or deploy
                 builds.
               </p>
             )}

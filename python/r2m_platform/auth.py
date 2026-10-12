@@ -1,14 +1,15 @@
-"""Signed demo sessions, role permissions and tenant scope. DEMO AUTH — NOT PRODUCTION AUTH."""
+"""Password sign-in, signed sessions, role permissions and tenant scope."""
 import base64
 import hashlib
 import hmac
 import json
+import os
 import re
 import time
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from .database import Scope
+from .database import Scope, apply_scope
 from .errors import forbidden, not_found
 
 SESSION_COOKIE = "r2m_session"
@@ -30,20 +31,45 @@ def _unb64(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
 
 
-def sign_session(key: str, user_id: UUID, ttl: int) -> str:
-    payload = _b64(json.dumps({"uid": str(user_id), "exp": int(time.time()) + ttl}).encode())
+# scrypt (RFC 7914) at n=2^14, r=8, p=1: ~16 MiB and tens of ms per check, from the stdlib.
+_SCRYPT = {"n": 2**14, "r": 8, "p": 1, "dklen": 32}
+
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    return f"scrypt${_b64(salt)}${_b64(hashlib.scrypt(password.encode(), salt=salt, **_SCRYPT))}"
+
+
+def verify_password(password: str, stored: str | None) -> bool:
+    """Constant-time check. Unknown users verify against a throwaway hash so timing doesn't reveal accounts."""
+    try:
+        scheme, salt, key = (stored or _DUMMY_HASH).split("$")
+        ok = scheme == "scrypt" and hmac.compare_digest(
+            hashlib.scrypt(password.encode(), salt=_unb64(salt), **_SCRYPT), _unb64(key))
+    except ValueError:
+        return False
+    return ok and stored is not None
+
+
+def password_version(password_hash: str) -> str:
+    """Short fingerprint of the stored hash. Sessions carry it, so setting a new password ends every older session."""
+    return hashlib.sha256(password_hash.encode()).hexdigest()[:16]
+
+
+def sign_session(key: str, user_id: UUID, ttl: int, pv: str) -> str:
+    payload = _b64(json.dumps({"uid": str(user_id), "pv": pv, "exp": int(time.time()) + ttl}).encode())
     sig = _b64(hmac.new(key.encode(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{sig}"
 
 
-def verify_session(key: str, token: str) -> UUID | None:
+def verify_session(key: str, token: str) -> tuple[UUID, str] | None:
     try:
         payload, sig = token.split(".", 1)
         expected = _b64(hmac.new(key.encode(), payload.encode(), hashlib.sha256).digest())
         if not hmac.compare_digest(sig, expected):
             return None
         data = json.loads(_unb64(payload))
-        return UUID(data["uid"]) if data["exp"] > time.time() else None
+        return (UUID(data["uid"]), data["pv"]) if data["exp"] > time.time() else None
     except (ValueError, KeyError, TypeError):
         return None
 
@@ -70,20 +96,26 @@ class Actor:
             raise forbidden(f"requires permission {permission} in the owning organization")
 
 
-async def load_actor(conn, user_id: UUID) -> tuple[Actor, Scope] | None:
+async def load_actor(conn, user_id: UUID, pv: str) -> tuple[Actor, Scope] | None:
     """One round trip: loads the actor and applies their row-level-security scope to this connection."""
     rows = await conn.fetch(
         """WITH s AS (SELECT * FROM r2m_apply_actor_scope($1))
-           SELECT u.id, u.email, u.display_name, m.organization_id, o.name, o.kind, o.slug, m.role,
+           SELECT u.password_hash, u.id, u.email, u.display_name, m.organization_id, o.name, o.kind, o.slug, m.role,
                   s.installations AS scope_installations, s.orgs AS scope_orgs
            FROM s CROSS JOIN users u LEFT JOIN org_memberships m ON m.user_id = u.id
            LEFT JOIN organizations o ON o.id = m.organization_id
-           WHERE u.id=$1 AND u.is_demo ORDER BY o.name, m.role""", user_id)
+           WHERE u.id=$1 AND u.password_hash IS NOT NULL ORDER BY o.name, m.role""", user_id)
     if not rows:
+        return None
+    if password_version(rows[0]["password_hash"]) != pv:  # stale session: undo the scope the query just applied
+        await apply_scope(conn, Scope((), ()))
         return None
     memberships = [{k: r[k] for k in ("organization_id", "name", "kind", "slug", "role")} for r in rows if r["role"]]
     actor = Actor(rows[0]["id"], rows[0]["email"], rows[0]["display_name"], memberships)
     return actor, Scope(tuple(rows[0]["scope_installations"]), tuple(rows[0]["scope_orgs"]))
+
+
+_DUMMY_HASH = hash_password(os.urandom(16).hex())
 
 
 # ---- per-customer SDK credentials ---------------------------------------------

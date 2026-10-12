@@ -8,7 +8,6 @@ import { AgentCard } from "@/components/agents/AgentCard";
 import { PageHeader, Panel, Badge } from "@/components/ui/shared";
 import { money } from "@/lib/format";
 import { useLive } from "@/components/ui/useLive";
-import { releaseChecks } from "@/lib/release";
 import { DESK_URL } from "@/lib/live-adapter";
 
 type Obj = Record<string, any>;
@@ -17,7 +16,7 @@ export function Overview() {
   const summary = useLive<{ summary: Obj }>(agentId ? `/agents/${agentId}/metrics?range=24h` : null)?.summary;
   const keewano = useLive<Obj>("/integrations/keewano");
   const keewanoOn = !!(keewano?.platform_enabled && keewano?.adapter_installed);
-  const blocked = state.builds.filter((b) => b.gate && !Object.values(releaseChecks(state, b.id)).every(Boolean));
+  const blocked = state.builds.filter((b) => b.deploymentStatus === "blocked");
   const coverage = summary?.policy_enforcement_coverage;
   const pct = (v: number | null | undefined) => (v == null ? "Unknown" : `${Math.round(v * 100)}%`);
   const terminal = state.runs.filter((r) => r.status !== "waiting_approval");

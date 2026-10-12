@@ -53,6 +53,12 @@ class RateLimiter:
             self._hits = {k: v for k, v in self._hits.items() if v[0] == window}
         return 0
 
+    def over(self, key: str, limit: int) -> int:
+        """Like hit() but without recording: seconds until the window resets if the key is at its limit, else 0."""
+        now = self._clock()
+        start, count = self._hits.get(key, (None, 0))
+        return int(60 - now % 60) + 1 if start == int(now // 60) and count >= limit else 0
+
     def check(self, request) -> int:
         method, path = request.method, request.url.path
         if not path.startswith("/api/") or path.startswith("/api/v1/health/"):

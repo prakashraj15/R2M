@@ -17,11 +17,11 @@ test("browser session request uses relative proxy path and cookie credentials", 
     return new Response(JSON.stringify({ ok: true }));
   }) as typeof fetch;
   try {
-    await api.signIn("dev@atlas.demo");
+    await api.signIn("dev@atlas.demo", "pw-for-test");
     assert.equal(url, "/api/v1/auth/session");
     assert.equal(options?.credentials, "same-origin");
     assert.equal(options?.cache, "no-store");
-    assert.equal(options?.body, JSON.stringify({ email: "dev@atlas.demo" }));
+    assert.equal(options?.body, JSON.stringify({ email: "dev@atlas.demo", password: "pw-for-test" }));
   } finally {
     globalThis.fetch = original;
   }
@@ -61,7 +61,7 @@ test("all browser mutation methods carry CSRF, including login and logout", asyn
     return new Response("{}");
   }) as typeof fetch;
   try {
-    await api.signIn("dev@atlas.demo");
+    await api.signIn("dev@atlas.demo", "pw-for-test");
     await api.signOut();
     await api.configureIntegration("demo-org", true);
     await api.updateIncident("incident-1", "investigating", "Reviewing");
@@ -90,7 +90,7 @@ test("rate limits retry the same mutation with headers and body preserved", asyn
       : new Response('{"ok":true}');
   }) as typeof fetch;
   try {
-    await api.signIn("dev@atlas.demo");
+    await api.signIn("dev@atlas.demo", "pw-for-test");
     assert.equal(calls.length, 2);
     assert.equal(calls[0].body, calls[1].body);
     assert.equal(new Headers(calls[1].headers).get("X-R2M-CSRF"), "1");

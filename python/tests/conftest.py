@@ -29,11 +29,14 @@ async def reset_db() -> None:
         await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
         await migrate(conn)
         await seed(conn)
+        from r2m_platform.auth import hash_password
+        await conn.execute("UPDATE users SET password_hash=$1", hash_password(PASSWORD))
     finally:
         await conn.close()
 
 
 CSRF = {"x-r2m-csrf": "1"}
+PASSWORD = "test-password-0123"  # every seeded user, test database only
 
 
 async def bypass(conn):

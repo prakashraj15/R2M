@@ -4,14 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ArrowLeft, Radio } from "lucide-react";
 import { Sidebar } from "./Sidebar";
-import { RoleSwitcher } from "./RoleSwitcher";
-import { OrgSwitcher } from "./OrgSwitcher";
+import { AccountMenu } from "./AccountMenu";
 import { BrandMark } from "@/components/brand/BrandMark";
 import { APP, CONTROL_URL, DESK_URL } from "@/lib/live-adapter";
 import { MotionRoot, PageTransition } from "@/components/ui/motion";
 // Two separate apps from one codebase (NEXT_PUBLIC_R2M_APP): the R2M Control Plane and the OpsPilot Operations Desk.
 export function AppShell({ children }: { children: ReactNode }) {
   const path = usePathname();
+  if (path === "/login") return <MotionRoot>{children}</MotionRoot>;
   const desk = APP === "desk";
   return (
     <MotionRoot>
@@ -37,8 +37,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 OpsPilot desk ↗
               </a>
             )}
-            {desk && <OrgSwitcher />}
-            <RoleSwitcher />
+            <AccountMenu />
             <span className="mock-label">
               <Radio size={12} /> LIVE
             </span>

@@ -29,7 +29,7 @@ PYTHONPATH=python uvicorn r2m_platform.main:app --host 127.0.0.1 --port 8000
   ```
 - **Latency:** the shared Aiven service is about 420 ms per round trip from here, so pages take 1–3 s. That's the network, not your code.
 
-Demo identities (`GET /api/v1/auth/identities`):
+Accounts (passwords via `scripts/set_password.py`; stored as scrypt hashes):
 
 | Email | Org | Role |
 |---|---|---|
@@ -53,12 +53,10 @@ Demo identities (`GET /api/v1/auth/identities`):
 - **Server-side fetches** go to `process.env.R2M_INTERNAL_API_URL` and must forward the incoming `cookie` header.
 - No secrets in the frontend. The only allowed public variable is `NEXT_PUBLIC_APP_LABEL`.
 
-### Auth and role switcher
+### Sign-in
 
-- **Login picker:** `GET /auth/identities`.
-- **Switch identity:** `POST /auth/session {email}`. Sign out with `DELETE /auth/session`.
+- **Sign in:** `POST /auth/session {email, password}` from the `/login` page. Sign out with `DELETE /auth/session`. To act as another role, sign out and sign in as that account.
 - **Who am I:** `GET /me` returns orgs, roles and `permissions` per org. Use the permissions to show or hide buttons, but the backend enforces them regardless.
-- Label it everywhere: **"Demo authentication, not production."**
 
 ### Screens → endpoints
 

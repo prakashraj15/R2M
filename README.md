@@ -4,7 +4,7 @@
 
 R2M is an AI governance and runtime-control platform for agents that take real actions. A vendor ships an agent with its policies written as code. The customer's security team approves those exact policies. Every risky tool call must be authorized by R2M at runtime, and everything that happens is recorded as traces, cost and tamper-evident evidence.
 
-> Hackathon prototype. Data is synthetic, sign-in is demo-only (not production authentication), and no real infrastructure is touched: the agent operates a simulated `payments-api`.
+> Data is synthetic and no real infrastructure is touched: the agent operates a simulated `payments-api`. Sign-in uses email and password (scrypt hashes, signed HttpOnly sessions).
 
 ## The problem
 
@@ -47,17 +47,19 @@ Two separate apps in two containers. The agent is a vendor app that reaches R2M 
 ## Live demo walkthrough
 
 There are two apps:
-- **Control Plane** (http://localhost:3000): approvals, policies, release, traces, costs and evidence. The role switcher signs you in as that demo identity.
-- **Operations Desk** (http://localhost:3001): chat with OpsPilot. Its "Review in R2M" and "Open R2M trace" links open the Control Plane.
+- **Control Plane** (http://localhost:3000): approvals, policies, release, traces, costs and evidence. Sign in with an account below; Sign out (top right) to switch roles.
+- **Operations Desk** (http://localhost:3001): chat with OpsPilot. Sign in with the same R2M account; the agent service checks it against R2M and keeps its own session. Its "Review in R2M" and "Open R2M trace" links open the Control Plane.
 
 Live agent replies take 20–40 s.
 
-| Identity | Role |
-|---|---|
-| Meridian Financial · `customer_ops` | Runs the payments service, chats with OpsPilot |
-| Meridian Financial · `customer_security` | Approves policies and risky actions |
-| Atlas Applied AI · `vendor_developer` | Builds the agent, submits policies |
-| Atlas Applied AI · `vendor_release_manager` | Evaluates and deploys builds |
+| Account | Org · role | Does |
+|---|---|---|
+| `ops@meridian.demo` | Meridian Financial · `customer_ops` | Runs the payments service, chats with OpsPilot |
+| `security@meridian.demo` | Meridian Financial · `customer_security` | Approves policies and risky actions (read-only on the desk) |
+| `dev@atlas.demo` | Atlas Applied AI · `vendor_developer` | Builds the agent, submits policies |
+| `release@atlas.demo` | Atlas Applied AI · `vendor_release_manager` | Evaluates and deploys builds |
+
+Passwords: `scripts/set_password.py` (see Run it). They are stored only as scrypt hashes.
 
 **1. Live run, start to end**
 1. In the **Operations Desk** (:3001), select the **degraded** scenario (this resets payments-api) and send *"payments-api is throwing errors, please fix it"*.
@@ -88,13 +90,16 @@ API references: http://localhost:3000/api/v1/docs (platform) and http://localhos
 cp .env.example .env     # DATABASE_URL (Aiven), SESSION_SIGNING_KEY, SDK_TOKEN_SECRET; optional OPENAI_*, KEEWANO_*
 # Aiven console → service → CA certificate → save as secrets/aiven-ca.pem
 docker compose up -d r2m --build                     # platform first; migrations run on start
-docker compose exec r2m python scripts/seed_demo.py  # demo orgs, identities, agent, simulated service
+docker compose exec r2m python scripts/seed_demo.py  # orgs, accounts, agent, simulated service
+# a random password per account, written once to a git-ignored file (or set your own: set_password.py EMAIL):
+(umask 077; docker compose exec -T r2m python scripts/set_password.py --generate --all > secrets/accounts.txt)
 # per-customer token for the OpsPilot container (written to .env as OPSPILOT_SDK_TOKEN):
 docker compose exec r2m python scripts/sdk_token.py issue --vendor atlas-applied-ai --customer meridian-financial --label opspilot-agent
+# also set OPSPILOT_SESSION_KEY in .env (32+ random characters; signs desk sign-in cookies)
 docker compose up -d --build                         # starts opspilot once r2m is healthy
 ```
 Then open http://localhost:3000 (Control Plane) and http://localhost:3001 (Operations Desk).
-- **Smoke test:** `python scripts/smoke_test.py --base http://127.0.0.1:3000`
+- **Smoke test:** `python scripts/smoke_test.py --base http://127.0.0.1:3000 --accounts secrets/accounts.txt`
 - **End-to-end (agent ↔ platform over HTTP):** `pytest python/tests/test_opspilot_e2e.py` against a disposable database.
 
 **Keewano (optional):** set `KEEWANO_ENABLED=true` and the keys, then:
@@ -162,7 +167,6 @@ The tests cover tenant isolation on every endpoint, cross-tenant access by direc
 
 ## Known limitations
 
-- Demo authentication: identities are picked from a list, with no passwords.
+- Password sign-in only: no SSO/OIDC, MFA or self-service reset yet (`scripts/set_password.py` sets passwords). Setting a new password ends that user's Control Plane sessions; desk sessions run to their 8 h expiry.
 - Synthetic data and a simulated `payments-api`; no real infrastructure, cloud or payment integration.
 - Not a compliance attestation. The evidence checksums detect tampering but are not WORM storage.
-- The desk's operator selector (Operations vs Atlas developer) is a demo label, not authentication. The real controls are R2M's grants, the infrastructure check and the release gate.

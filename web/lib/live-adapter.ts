@@ -1,7 +1,7 @@
 // Maps live R2M / OpsPilot API responses onto the view models the original screens render.
 // Control Plane data comes from the R2M platform (/api/v1, signed session cookie);
 // Operations Desk data comes from the OpsPilot agent service (/agent-api).
-import { request } from "./api";
+import { ApiError, request } from "./api";
 import type {
   Approval,
   Build,
@@ -264,13 +264,15 @@ function traceToExecution(t: Obj): Execution {
 
 // ---------------------------------------------------------------- Operations Desk
 export async function deskRequest<T = Obj>(path: string, init?: RequestInit): Promise<T> {
+  const unsafe = ["POST", "PUT", "PATCH", "DELETE"].includes((init?.method || "GET").toUpperCase());
   const r = await fetch(`/agent-api${path}`, {
     ...init,
-    headers: { "content-type": "application/json", ...(init?.headers || {}) },
+    headers: { "content-type": "application/json", ...(unsafe ? { "X-R2M-CSRF": "1" } : {}), ...(init?.headers || {}) },
+    credentials: "same-origin",
     cache: "no-store",
   });
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.detail || body.message || `OpsPilot request failed (${r.status})`);
+  if (!r.ok) throw new ApiError(r.status, { code: String(r.status), message: body.detail || body.message || `OpsPilot request failed (${r.status})`, request_id: "" });
   return body as T;
 }
 

@@ -7,7 +7,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: r2m-control-plane:prototype
+    image: r2m-control-plane:${R2M_VERSION:-1.0.0}
     ports:
       - "127.0.0.1:3000:3000"
     env_file:
@@ -32,7 +32,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.opspilot
-    image: opspilot:prototype
+    image: opspilot:${R2M_VERSION:-1.0.0}
     ports:
       - "127.0.0.1:3001:3001"
     # Least privilege: only what the agent needs (no database, session or Keewano secrets).
@@ -40,6 +40,7 @@ services:
       R2M_API_URL: http://r2m:3000
       R2M_CONTROL_PLANE_URL: http://localhost:3000
       OPSPILOT_SDK_TOKEN: ${OPSPILOT_SDK_TOKEN:?issue one with scripts/sdk_token.py and put it in .env}
+      OPSPILOT_SESSION_KEY: ${OPSPILOT_SESSION_KEY:?set a random 32+ character key in .env (signs desk sign-in cookies)}
       R2M_VENDOR_ORG_ID: b5333f96-384a-5bf6-9841-589df8574da5     # Atlas Applied AI (seed id)
       R2M_CUSTOMER_ORG_ID: 45a47bd0-ae2c-55b1-9bce-6a70902564e3   # Meridian Financial (seed id)
       R2M_ENVIRONMENT: production

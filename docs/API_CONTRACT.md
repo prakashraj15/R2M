@@ -29,7 +29,7 @@ Base path `/api/v1`. The browser reaches it through the Next.js `/api/*` proxy o
 
 ## Authentication
 
-- **Browser:** `POST /auth/session {"email"}` sets an HMAC-signed `r2m_session` cookie (`HttpOnly`, `SameSite=Lax`, 8 h). Only seeded `is_demo` users are accepted. **This is demo auth, not production auth.**
+- **Browser:** `POST /auth/session {"email","password"}` checks the scrypt hash and sets an HMAC-signed `r2m_session` cookie (`HttpOnly`, `SameSite=Lax`, Secure on https, 8 h). The cookie carries a fingerprint of the password hash, so a new password ends older sessions. Wrong email and wrong password get the same 401; 5 failures per account per minute return 429.
 - **CSRF:** every browser write, login included, must send the header **`X-R2M-CSRF: 1`**. GETs don't need it.
 - **SDK / scripts:** `Authorization: Bearer <per-customer SDK token>`, scoped to one vendor+customer pair. Issue one with `python scripts/sdk_token.py issue --vendor <slug> --customer <slug> --label <name>` (or `list`, `revoke <id>`). The demo route passes the agent its own token as `context["sdk_token"]`. This is accepted only on `POST /agents`, `/ingest/events`, `/actions/*`, `/agents/{id}/policies/register` and `POST /agents/{id}/evaluations`.
 
@@ -51,8 +51,7 @@ Permissions by role: `GET /me` returns them per org. The source of truth is `PER
 |---|---|---|
 | GET | `/health/live` | unauthenticated, no DB |
 | GET | `/health/ready` | `{"status":"ready"}` or 503; no driver detail |
-| GET | `/auth/identities` | allowlisted identities for the login picker |
-| POST/DELETE | `/auth/session` | sign in as `{email}` / sign out |
+| POST/DELETE | `/auth/session` | sign in with `{email, password}` / sign out |
 | GET | `/me` | user, orgs, roles, permissions, `demo_auth: true` |
 | GET | `/organizations` | the caller's orgs only |
 | GET | `/organizations/{orgId}/overview?range=` | `metrics` (6 KPIs below), `agents` registry rows, `integrations` |
@@ -136,10 +135,14 @@ The desk proxies `/agent-api/*` to this private listener, `127.0.0.1:8100`.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/agent-api/health` | `{status, configured}` |
+| GET | `/agent-api/health` | `{status, configured}` (no sign-in) |
+| POST/DELETE | `/agent-api/session` | sign in with an R2M `{email, password}` (checked against R2M once; sets the signed `opspilot_session` cookie) / sign out |
+| GET | `/agent-api/me` | `{email, name, role, organization, can_instruct}` |
 | GET | `/agent-api/state` | `{service, history, scenarios, control_plane_url}` |
-| POST | `/agent-api/message` | `{message, scenario: healthy\|degraded\|approval\|faulty, operator: customer_ops\|vendor_developer}` → the agent's reply: `decision, reasons, steps, proposal, keewano, trace_id, action_id, approval_id` |
+| POST | `/agent-api/message` | `{message, scenario: healthy\|degraded\|approval\|faulty}` → the agent's reply: `decision, reasons, steps, proposal, keewano, trace_id, action_id, approval_id`. The acting user and role come from the session; `customer_security` is read-only (403) |
 | POST | `/agent-api/scenarios/{id}/reset` | Proxies `/sim/scenarios/{id}/reset` |
+
+Every desk call except health needs the session; POST/DELETE also need `X-R2M-CSRF: 1`.
 
 **Configuration** (environment): `R2M_API_URL`, `OPSPILOT_SDK_TOKEN`, `R2M_VENDOR_ORG_ID`, `R2M_CUSTOMER_ORG_ID`, `R2M_ENVIRONMENT`, `R2M_CONTROL_PLANE_URL`, `OPENAI_*`.
 

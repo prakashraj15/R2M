@@ -1,6 +1,6 @@
 # R2M Security Model (prototype)
 
-This is demonstrable engineering, not SOC 2, ISO 27001 or a legal audit attestation. Demo authentication is labeled non-production everywhere.
+This is demonstrable engineering, not SOC 2, ISO 27001 or a legal audit attestation.
 
 ## Tenancy
 
@@ -33,7 +33,7 @@ The application filters by scope, and Postgres enforces the same scope underneat
 
 | Caller | Mechanism | Notes |
 |---|---|---|
-| Browser | HMAC-SHA256 signed cookie `r2m_session` (HttpOnly, SameSite=Lax, Secure on https, 8 h) | Only seeded `is_demo` users. Session holds the user id only; roles are reloaded from the DB on every request |
+| Browser | HMAC-SHA256 signed cookie `r2m_session` (HttpOnly, SameSite=Lax, Secure on https, 8 h) | Email + password (scrypt n=2^14, r=8, p=1; constant-time check; unknown emails verify against a dummy hash). Session holds the user id and a password-hash fingerprint; roles are reloaded from the DB on every request, and a changed password invalidates older sessions. 5 failed sign-ins per account per minute, plus the per-IP login limit |
 | SDK / scripts | Per-customer bearer token `r2m_sdk_<credential id>_<HMAC-SHA256(SDK_TOKEN_SECRET, id)>`, issued with `scripts/sdk_token.py` | Each token is scoped to one vendor+customer pair, can be revoked, and nothing secret is stored in the DB. Every SDK endpoint enforces the pair: agent registration, policy registration, authorize, result, ingest and evals. Another customer's data gets `tenant_scope_invalid`, 404 or `scope_mismatch` |
 
 ## Authorization (roles → permissions)
@@ -103,7 +103,7 @@ Permissions are checked against the **owning** org of the record: the vendor org
 
 ## Known gaps (prototype)
 
-- Demo authentication: any allowlisted identity can be selected without a password. It is labeled non-production.
+- Password sign-in only: no SSO/OIDC or MFA yet. The Operations Desk verifies R2M credentials once and issues its own signed cookie (`OPSPILOT_SESSION_KEY`); it is not revoked by a password change until its 8 h expiry. The desk user's role (from R2M) decides whether they may instruct the agent; the browser cannot choose it.
 - SDK tokens travel over loopback HTTP inside the container. A deployment with a separate agent host needs TLS for that hop.
 - Rate-limit counters are per process and reset on restart.
 - Demo scenario reset is available to any in-scope demo role when `APP_ENV=demo`.

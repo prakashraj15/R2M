@@ -10,7 +10,7 @@ import httpx
 import pytest
 import uvicorn
 import asyncpg
-from conftest import CSRF, reset_db
+from conftest import CSRF, PASSWORD, reset_db
 from seed_demo import uid
 
 import opspilot_stub
@@ -52,7 +52,7 @@ def live(monkeypatch):
 
 def login(base, email):
     c = httpx.Client(base_url=base + "/api/v1", timeout=30, headers=CSRF)
-    assert c.post("/auth/session", json={"email": email}).status_code == 200
+    assert c.post("/auth/session", json={"email": email, "password": PASSWORD}).status_code == 200
     return c
 
 

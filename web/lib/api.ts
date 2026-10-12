@@ -102,13 +102,6 @@ export async function request<T = unknown>(
     }),
   );
 }
-export interface Identity {
-  email: string;
-  display_name: string;
-  organization: string;
-  organization_kind: string;
-  role: string;
-}
 export interface Session {
   user: { id: string; email: string; display_name: string };
   organizations: {
@@ -119,7 +112,6 @@ export interface Session {
     roles: string[];
     permissions: string[];
   }[];
-  demo_auth: boolean;
 }
 const id = encodeURIComponent;
 const post = <T = unknown>(path: string, body?: unknown) =>
@@ -130,9 +122,7 @@ const post = <T = unknown>(path: string, body?: unknown) =>
 // Unknown response bodies are intentional until each screen has a validated DTO adapter.
 // Never cast backend payloads straight to the UI view models; map them in lib/live-adapter.ts.
 export const api = {
-  identities: () =>
-    request<{ identities: Identity[]; notice: string }>("/auth/identities"),
-  signIn: (email: string) => post("/auth/session", { email }),
+  signIn: (email: string, password: string) => post("/auth/session", { email, password }),
   signOut: () => request("/auth/session", { method: "DELETE" }),
   me: () => request<Session>("/me"),
   organizations: () => request("/organizations"),

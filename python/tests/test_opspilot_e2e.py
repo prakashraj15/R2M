@@ -15,7 +15,7 @@ import httpx
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
-from conftest import CSRF, reset_db
+from conftest import CSRF, PASSWORD, reset_db
 from seed_demo import uid
 
 from mock_agent import evals, memory
@@ -53,9 +53,10 @@ def live(monkeypatch, request):
     monkeypatch.setenv("OPSPILOT_SDK_TOKEN", asyncio.run(_evals_token("opspilot-agent")))
     monkeypatch.setenv("R2M_VENDOR_ORG_ID", str(uid("org", "atlas")))
     monkeypatch.setenv("R2M_CUSTOMER_ORG_ID", str(uid("org", "meridian")))
+    monkeypatch.setenv("OPSPILOT_SESSION_KEY", "test-desk-session-key-0123456789abcdef")
     import opspilot_service.app as service
-    global AGENT_API
-    AGENT_API = TestClient(importlib.reload(service).app)
+    global AGENT_APP
+    AGENT_APP = importlib.reload(service).app
     yield f"http://127.0.0.1:{port}"
     server.should_exit = True
     thread.join(5)
@@ -75,13 +76,14 @@ async def _evals_token(label: str = "run-evals") -> str:
 
 def login(base, email):
     c = httpx.Client(base_url=base + "/api/v1", timeout=60, params={"installation_id": str(M_INST)}, headers=CSRF)
-    assert c.post("/auth/session", json={"email": email}).status_code == 200
-    c.operator = "vendor_developer" if email.endswith("@atlas.demo") else "customer_ops"  # desk persona
+    assert c.post("/auth/session", json={"email": email, "password": PASSWORD}).status_code == 200
+    c.desk = TestClient(AGENT_APP, headers=CSRF)  # the same account signed in to the OpsPilot desk
+    assert c.desk.post("/agent-api/session", json={"email": email, "password": PASSWORD}).status_code == 200
     return c
 
 
-def say(client, msg, scenario):  # `client` (the browser session) is unused: chat goes to the OpsPilot service
-    r = AGENT_API.post("/agent-api/message", json={"message": msg, "scenario": scenario, "operator": client.operator})
+def say(client, msg, scenario):  # chat goes to the OpsPilot service, as the user signed in to the desk
+    r = client.desk.post("/agent-api/message", json={"message": msg, "scenario": scenario})
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -109,6 +111,14 @@ def test_opspilot_full_chain(live):
     import os
     ops, dev = login(live, "ops@meridian.demo"), login(live, "dev@atlas.demo")
     security, release = login(live, "security@meridian.demo"), login(live, "release@atlas.demo")
+
+    # 0. Desk sign-in is the only source of identity: anonymous, wrong-password and read-only users can't instruct it.
+    anon = TestClient(AGENT_APP, headers=CSRF)
+    assert anon.post("/agent-api/message", json={"message": "hi", "operator": "vendor_developer"}).status_code == 401
+    assert anon.post("/agent-api/session", json={"email": "ops@meridian.demo", "password": "wrong"}).status_code == 401
+    assert security.desk.get("/agent-api/me").json()["can_instruct"] is False
+    assert security.desk.post("/agent-api/message", json={"message": "hi"}).status_code == 403
+    assert ops.desk.post("/agent-api/message", json={"message": "hi"}, headers={"x-r2m-csrf": ""}).status_code == 403
 
     # 1. The agent's build is new, so it is only proposed and every guarded action is denied.
     first = say(ops, "restart payments-api", "degraded")
