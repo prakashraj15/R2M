@@ -17,7 +17,8 @@ def since(range_key: str) -> datetime:
 def health(last_seen: datetime | None, calls: int, errors: int, critical_open: int = 0) -> str:
     if critical_open:
         return "critical"
-    if last_seen is None or datetime.now(timezone.utc) - last_seen > STALE_AFTER:
+    # Health is judged on the calls observed in the range; with none, it is unknown once the last sighting is stale.
+    if last_seen is None or (not calls and datetime.now(timezone.utc) - last_seen > STALE_AFTER):
         return "unknown"
     if calls and errors / calls >= 0.5:
         return "critical"
@@ -108,6 +109,21 @@ async def component_stats(conn, installation_id: UUID, start: datetime) -> dict:
            FROM spans s JOIN executions e ON e.id = s.execution_id JOIN deployments d ON d.id = e.deployment_id
            LEFT JOIN LATERAL (SELECT sum(amount_usd) AS usd FROM usage_records WHERE span_id = s.id) u ON true
            WHERE d.installation_id=$1 AND s.started_at >= $2 AND (s.attributes ?| array['component_key','component'])
-           GROUP BY 1""", installation_id, start)
+           GROUP BY 1
+           UNION ALL
+           -- the policy gate's own activity: every authorization decision it made (denials are outcomes, not errors)
+           SELECT 'kind:gateway', count(*), 0, NULL, 0, max(pd.evaluated_at)
+           FROM policy_decisions pd JOIN executions e ON e.id = pd.execution_id JOIN deployments d ON d.id = e.deployment_id
+           WHERE d.installation_id=$1 AND pd.evaluated_at >= $2""", installation_id, start)
     return {r["key"]: {"calls": r["calls"], "errors": r["errors"], "p95_ms": r["p95"], "cost_usd": float(r["cost_usd"]),
                        "last_seen": r["last_seen"]} for r in rows}
+
+
+if __name__ == "__main__":  # self-check: python -m r2m_platform.services.metrics_rollup
+    old = datetime.now(timezone.utc) - timedelta(hours=2)
+    assert health(old, 218, 0) == "healthy"  # idle now, but busy and clean in the range
+    assert health(old, 0, 0) == "unknown"  # nothing observed and stale
+    assert health(old, 10, 2) == "degraded" and health(old, 10, 6) == "critical"
+    assert health(None, 5, 0) == "unknown" and health(old, 5, 0, critical_open=1) == "critical"
+    print("ok")
+

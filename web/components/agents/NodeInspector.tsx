@@ -17,7 +17,7 @@ export function NodeInspector({ component }: { component: ComponentInfo }) {
         <span className="tiny muted">{component.kind}</span>
       </div>
       <div className="inspector-body">
-        <div className="eyebrow">OPSPILOT / {component.id}</div>
+        <div className="eyebrow">{identity.agent.toUpperCase()} / {component.id}</div>
         <h3>{component.name}</h3>
         <Badge>{component.health}</Badge>
         <p>{component.description}</p>

@@ -81,7 +81,8 @@ async def topology(conn, installation: dict, start) -> dict:
     stats = await metrics_rollup.component_stats(conn, installation["id"], start)
     nodes = []
     for c in comps:
-        s = stats.get(c["component_key"], {"calls": 0, "errors": 0, "p95_ms": None, "cost_usd": 0.0, "last_seen": None})
+        s = stats.get(c["component_key"]) or (stats.get("kind:gateway") if c["kind"] == "gateway" else None) \
+            or {"calls": 0, "errors": 0, "p95_ms": None, "cost_usd": 0.0, "last_seen": None}
         last_seen = max(filter(None, [c["last_seen_at"], s["last_seen"]]), default=None)
         nodes.append({**dict(c), "metrics": s, "status": metrics_rollup.health(last_seen, s["calls"], s["errors"]),
                       "source": "observed" if s["calls"] else "registered (no telemetry in range)"})

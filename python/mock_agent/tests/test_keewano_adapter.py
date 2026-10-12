@@ -52,6 +52,10 @@ def test_map_event_allowlists_and_sanitizes():
         {"eventTypeId": 2001, "dataType": "string", "data": "post_deploy_errors", "timestamp": k._epoch("2026-10-11T12:00:00Z")}]
     assert k.map_event(_event("insight", "keewano", summary="anything")) is None
     assert k.map_event({**_event("span", "step:PROPOSE", tool="restart_service"), "execution_id": None}) is None
+    proposed = k.map_event(_event("span", "step:PROPOSE", tool="rollback_deployment", source="keewano"))
+    assert [(e["eventTypeId"], e["data"]) for e in proposed["events"]] == [(2002, "rollback"), (2008, "keewano")]
+    assert [e["eventTypeId"] for e in k.map_event(_event("span", "step:PROPOSE", tool="rollback_deployment",
+                                                         source="fault_injection"))["events"]] == [2002]
 
 
 def test_agent_run_maps_to_complete_outcome_record():

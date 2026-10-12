@@ -236,8 +236,11 @@ function groupTopology(nodes: Obj[], service: Obj | undefined): ComponentInfo[] 
     const observed = members.filter((n) => n.metrics?.calls);
     const sum = (k: string) => (observed.length ? observed.reduce((a, n) => a + (n.metrics?.[k] || 0), 0) : null);
     const p95 = observed.map((n) => n.metrics?.p95_ms).filter((v) => v != null);
-    let h: Health = members.length
-      ? members.map((n) => health(n.status)).reduce((a, b) => (RANK.indexOf(b) > RANK.indexOf(a) ? b : a), "Healthy")
+    // Worst health among members seeing traffic; an unused member (e.g. an idle fallback model) doesn't make the
+    // group Unknown. With no traffic at all, the members' own status (Unknown when nothing was observed) stands.
+    const judged = observed.length ? observed : members;
+    let h: Health = judged.length
+      ? judged.map((n) => health(n.status)).reduce((a, b) => (RANK.indexOf(b) > RANK.indexOf(a) ? b : a), "Healthy")
       : "Unknown";
     if (id === "service" && service) h = health(service.health_status);
     return {

@@ -207,6 +207,7 @@ def test_opspilot_full_chain(live):
     nodes = {n["component_key"]: n for n in security.get(f"/agents/{AGENT}/topology").json()["nodes"]}
     assert (nodes["sim-llm"]["metrics"] or {}).get("calls")
     assert (nodes["rollback_deployment"]["metrics"] or {}).get("calls")
+    assert nodes["policy-gateway"]["metrics"]["calls"] and nodes["policy-gateway"]["status"] == "healthy"  # its decisions
 
 
 @pytest.mark.keewano

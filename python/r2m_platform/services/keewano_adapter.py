@@ -121,6 +121,9 @@ def map_event(event: dict[str, Any]) -> dict[str, Any] | None:
         out.append(_ev(2001, category, ts))
     elif kind == "span" and name == "step:PROPOSE" and remediation:
         out.append(_ev(2002, remediation, ts))
+        # Also at propose time, so runs that stop at approval or denial still say where the fix came from.
+        if attrs.get("source") in RECOMMENDATION_SOURCES:
+            out.append(_ev(2008, attrs["source"], ts))
     elif kind == "span" and name == "step:VERIFY" and remediation and isinstance(attrs.get("recovered"), bool):
         # The complete outcome record, in order, so the query never depends on same-second ordering.
         if version:
