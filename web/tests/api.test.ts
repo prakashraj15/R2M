@@ -18,7 +18,7 @@ test("browser session request uses relative proxy path and cookie credentials", 
   }) as typeof fetch;
   try {
     await api.signIn("dev@atlas.demo");
-    assert.equal(url, "/api/v1/demo/session");
+    assert.equal(url, "/api/v1/auth/session");
     assert.equal(options?.credentials, "same-origin");
     assert.equal(options?.cache, "no-store");
     assert.equal(options?.body, JSON.stringify({ email: "dev@atlas.demo" }));
@@ -119,7 +119,7 @@ test("rate retries are bounded and other failures are never retried", async () =
       count++;
       return new Response('{"code":"agent_unavailable"}', { status: 503 });
     }) as typeof fetch;
-    await assert.rejects(api.message("Inspect", "healthy"));
+    await assert.rejects(api.resetScenario("healthy"));
     assert.equal(count, 1);
   } finally {
     globalThis.fetch = original;

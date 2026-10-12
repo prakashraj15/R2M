@@ -3,6 +3,7 @@
 Covers the hackathon chain: proposed build -> offline evals -> policy approval -> release -> four scenarios.
 """
 import asyncio
+import importlib
 import json
 import socket
 import sys
@@ -13,6 +14,7 @@ import asyncpg
 import httpx
 import pytest
 import uvicorn
+from fastapi.testclient import TestClient
 from conftest import CSRF, reset_db
 from seed_demo import uid
 
@@ -46,6 +48,14 @@ def live(monkeypatch, request):
     thread.start()
     while not server.started:
         time.sleep(0.05)
+    # The agent is a separate service: its own per-customer SDK token, reaching R2M only over HTTP.
+    monkeypatch.setenv("R2M_API_URL", f"http://127.0.0.1:{port}")
+    monkeypatch.setenv("OPSPILOT_SDK_TOKEN", asyncio.run(_evals_token("opspilot-agent")))
+    monkeypatch.setenv("R2M_VENDOR_ORG_ID", str(uid("org", "atlas")))
+    monkeypatch.setenv("R2M_CUSTOMER_ORG_ID", str(uid("org", "meridian")))
+    import opspilot_service.app as service
+    global AGENT_API
+    AGENT_API = TestClient(importlib.reload(service).app)
     yield f"http://127.0.0.1:{port}"
     server.should_exit = True
     thread.join(5)
@@ -53,24 +63,25 @@ def live(monkeypatch, request):
     memory.reset_all()
 
 
-async def _evals_token() -> str:
+async def _evals_token(label: str = "run-evals") -> str:
     import os
     conn = await asyncpg.connect(os.environ["TEST_DATABASE_URL"])
     try:
         return (await issue_sdk_credential(conn, os.environ["SDK_TOKEN_SECRET"], uid("org", "atlas"),
-                                           uid("org", "meridian"), "run-evals"))[1]
+                                           uid("org", "meridian"), label))[1]
     finally:
         await conn.close()
 
 
 def login(base, email):
     c = httpx.Client(base_url=base + "/api/v1", timeout=60, params={"installation_id": str(M_INST)}, headers=CSRF)
-    assert c.post("/demo/session", json={"email": email}).status_code == 200
+    assert c.post("/auth/session", json={"email": email}).status_code == 200
+    c.operator = "vendor_developer" if email.endswith("@atlas.demo") else "customer_ops"  # desk persona
     return c
 
 
-def say(client, msg, scenario):
-    r = client.post("/demo/agent/message", json={"message": msg, "scenario": scenario})
+def say(client, msg, scenario):  # `client` (the browser session) is unused: chat goes to the OpsPilot service
+    r = AGENT_API.post("/agent-api/message", json={"message": msg, "scenario": scenario, "operator": client.operator})
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -133,7 +144,7 @@ def test_opspilot_full_chain(live):
     assert release.post(f"/agents/{AGENT}/deployments/{gate['deployment_id']}/deploy").json()["status"] == "deployed"
 
     # 4. Healthy observation: no mutation, traced with simulated cost.
-    ops.post("/demo/agent/scenarios/healthy/reset")
+    ops.post("/operations/scenarios/healthy/reset")
     healthy = say(ops, "How is payments-api doing?", "healthy")
     assert healthy["decision"] is None and "No action taken" in healthy["reply"]
     trace = security.get(f"/traces/{healthy['trace_id']}").json()
@@ -141,13 +152,13 @@ def test_opspilot_full_chain(live):
     assert trace["usage"] and all(u["cost_source"] == "simulated" for u in trace["usage"])
 
     # 5. Degraded without Keewano: deterministic restart, honestly labelled.
-    ops.post("/demo/agent/scenarios/degraded/reset")
+    ops.post("/operations/scenarios/degraded/reset")
     degraded = say(ops, "payments-api is throwing errors, fix it", "degraded")
     assert degraded["proposal"]["tool"] == "restart_service" and degraded["decision"] == "ALLOW"
     assert "intelligence unavailable" in degraded["reply"] and degraded["verified"] is True
 
     # 6. Approval-required rollback, resumed in the same execution, executed exactly once.
-    ops.post("/demo/agent/scenarios/approval/reset")
+    ops.post("/operations/scenarios/approval/reset")
     pending = say(ops, "Roll back payments-api to v2.0", "approval")
     assert pending["decision"] == "REQUIRE_APPROVAL" and pending["approval_id"]
     approvals = security.get("/approvals").json()
@@ -156,21 +167,21 @@ def test_opspilot_full_chain(live):
                          json={"decision": "approve"}).json()["status"] == "approved"
     done = say(ops, "continue", "approval")
     assert done["decision"] == "ALLOW" and done["execution_id"] == pending["execution_id"] and done["verified"]
-    state = ops.get("/demo/agent/state").json()
+    state = ops.get("/operations/state").json()
     assert state["services"][0]["deployment_version"] == "v2.0"
     trace = security.get(f"/traces/{pending['trace_id']}").json()
     action = next(a for a in trace["actions"] if str(a["id"]) == str(pending["action_id"]))
     assert action["authorized_at"] and action["executed_at"] and action["verified_at"]
 
     # 7. Faulty build path: customers never get it; for the vendor the infrastructure refuses it.
-    ops.post("/demo/agent/scenarios/faulty/reset")
+    ops.post("/operations/scenarios/faulty/reset")
     customer_try = say(ops, "run the faulty build rollback", "faulty")
     assert "vendor-only" in customer_try["reply"]
     vendor_try = say(dev, "run the faulty build rollback", "faulty")
     assert vendor_try["reasons"] == ["INFRASTRUCTURE_REFUSED_NO_GRANT"]
     incidents = security.get(f"/agents/{AGENT}/incidents").json()["incidents"]
     assert any(i["category"] == "unauthorized_action_attempt" and i["severity"] == "critical" for i in incidents)
-    assert ops.get("/demo/agent/state").json()["services"][0]["deployment_version"] == "v2.1"
+    assert ops.get("/operations/state").json()["services"][0]["deployment_version"] == "v2.1"
 
     # 8. Topology nodes light up from the agent's component-tagged spans.
     nodes = {n["component_key"]: n for n in security.get(f"/agents/{AGENT}/topology").json()["nodes"]}
@@ -199,13 +210,13 @@ def test_keewano_answer_changes_recommendation_and_mirrors_events(live, monkeypa
     meridian = str(uid("org", "meridian"))
 
     # Keewano off for Meridian: honest fallback.
-    ops.post("/demo/agent/scenarios/degraded/reset")
+    ops.post("/operations/scenarios/degraded/reset")
     off = say(ops, "payments-api is throwing errors, fix it", "degraded")
     assert off["insight"]["status"] == "unavailable" and off["proposal"]["tool"] == "restart_service"
 
     # Keewano on: the live answer changes the proposal; DEPLOY-001 still gates it.
     assert security.put("/integrations/keewano", json={"organization_id": meridian, "enabled": True}).status_code == 200
-    ops.post("/demo/agent/scenarios/degraded/reset")
+    ops.post("/operations/scenarios/degraded/reset")
     on = say(ops, "payments-api is throwing errors, fix it", "degraded")
     assert questions and "post_deploy_errors" in questions[-1]
     assert on["insight"]["status"] == "ok" and on["insight"]["supported"] is True

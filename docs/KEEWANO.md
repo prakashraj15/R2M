@@ -66,6 +66,6 @@ If the MCP tool needs a project argument, set `KEEWANO_PROJECT_ID`.
 - **Backfill:** 298 synthetic entities.
   - Post-deploy-error history: rollback recovered 52 of 57, restart 8 of 40.
   - Before/after by recommendation source: Keewano-informed recovered 65 of 72 (90%), deterministic 35 of 90 (39%).
-- **Live demo** (`scripts/live_demo_check.py`): with Keewano on, the degraded turn proposes a Keewano-informed rollback (n=109). Without Keewano it proposes a restart labelled "intelligence unavailable".
+- **Live run** (Operations Desk, degraded scenario): with Keewano on, the degraded turn proposes a Keewano-informed rollback (n=109). Without Keewano it proposes a restart labelled "intelligence unavailable".
 
 Check your own setup with `python scripts/keewano_check.py --env-file .env --ingest --query`.

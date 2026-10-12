@@ -100,7 +100,7 @@ export function AgentTopology({
         <Controls showInteractive={false} />
       </ReactFlow>
       <span className="canvas-caption">
-        Configured topology · simulated observations
+        Registered topology · live observations
       </span>
     </div>
   );

@@ -50,7 +50,7 @@ async def app():
 
 async def login(app, email: str) -> httpx.AsyncClient:
     c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=CSRF)
-    r = await c.post("/api/v1/demo/session", json={"email": email})
+    r = await c.post("/api/v1/auth/session", json={"email": email})
     assert r.status_code == 200, r.text
     return c
 
@@ -91,7 +91,7 @@ async def test_requires_session_and_sdk_token(app):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=CSRF) as c:
         assert (await c.get("/api/v1/me")).status_code == 401
         assert (await c.post("/api/v1/ingest/events", json={"events": []})).status_code == 401
-        assert (await c.post("/api/v1/demo/session", json={"email": "intruder@evil.test"})).status_code == 401
+        assert (await c.post("/api/v1/auth/session", json={"email": "intruder@evil.test"})).status_code == 401
         c.cookies.set("r2m_session", "forged.signature")
         assert (await c.get("/api/v1/me")).status_code == 401
         for bad in ("not-a-token", "r2m_sdk_" + "0" * 32 + "_" + "f" * 64):  # wrong format / forged HMAC
@@ -254,8 +254,12 @@ async def test_release_gate_blocks_failing_build(app):
                                     json={**body, "build_version": "safe-1.0", "artifact_digest": digest("5")})).json()
     assert no_policy["status"] == "blocked" and no_policy["details"]["no_policies_registered"]  # never vacuously approved
     dev, security = await login(app, "dev@atlas.demo"), await login(app, "security@meridian.demo")
-    async with sdk_client(app) as s:
-        rev = (await s.post(f"/api/v1/agents/{AGENT}/policies/register", json={"policies": [DEPLOY_001]})).json()["policies"][0]
+    async with sdk_client(app) as s:  # the safe build declares DEPLOY-001 via its deployment (policy manifest)
+        rev = (await s.post(f"/api/v1/agents/{AGENT}/policies/register", json={
+            "installation_id": str(M_INST), "deployment_id": no_policy["deployment_id"], "policies": [DEPLOY_001]})).json()["policies"][0]
+        foreign = await s.post(f"/api/v1/agents/{AGENT}/policies/register", json={
+            "deployment_id": str(uuid.uuid4()), "policies": [DEPLOY_001]})
+        assert foreign.status_code == 404  # unknown / out-of-scope deployment
     sub = (await dev.post(f"/api/v1/agents/{AGENT}/policies/{rev['revision_id']}/submit", json=body)).json()
     await security.post(f"/api/v1/approvals/{sub['submission_id']}/decision", json={"decision": "approve"})
     faulty = (await release.post(f"/api/v1/agents/{AGENT}/releases/evaluate",
@@ -363,7 +367,7 @@ async def test_csrf_header_and_rate_limits(app):
     from r2m_platform.guards import RateLimiter
     ops = await login(app, "ops@meridian.demo")
     del ops.headers["x-r2m-csrf"]
-    r = await ops.post("/api/v1/demo/agent/scenarios/healthy/reset")
+    r = await ops.post("/api/v1/operations/scenarios/healthy/reset")
     assert (r.status_code, r.json()["code"]) == (403, "csrf_required")
     assert (await ops.get("/api/v1/me")).status_code == 200  # reads don't need it
     async with sdk_client(app) as s:  # bearer-token SDK calls are exempt
@@ -371,8 +375,8 @@ async def test_csrf_header_and_rate_limits(app):
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=CSRF) as c:
         spoof = [{"x-forwarded-for": f"10.0.0.{i}"} for i in range(21)]  # rotating XFF must not reset the limit
-        with mock.patch.dict("r2m_platform.guards.ROUTE_LIMITS", {("POST", "/api/v1/demo/session"): ("login", 20)}):
-            codes = [(await c.post("/api/v1/demo/session", json={"email": "nobody@x.test"}, headers=h)).status_code
+        with mock.patch.dict("r2m_platform.guards.ROUTE_LIMITS", {("POST", "/api/v1/auth/session"): ("login", 20)}):
+            codes = [(await c.post("/api/v1/auth/session", json={"email": "nobody@x.test"}, headers=h)).status_code
                      for h in spoof]
     assert codes[:19] == [401] * 19 and set(codes[19:]) == {429}  # login limit (patched to 20), incl. the login above
 

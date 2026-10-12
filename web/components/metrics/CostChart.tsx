@@ -19,7 +19,7 @@ export function CostChart({
     <div
       className="chart"
       role="img"
-      aria-label={`${kind === "cost" ? "Simulated model cost" : "Run duration in milliseconds"} by execution`}
+      aria-label={`${kind === "cost" ? "Model cost" : "Run duration in milliseconds"} by execution`}
     >
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
@@ -53,7 +53,7 @@ export function CostChart({
           />
           <Bar
             dataKey="value"
-            name={kind === "cost" ? "Simulated USD" : "Duration (ms)"}
+            name={kind === "cost" ? "USD" : "Duration (ms)"}
             fill="#bfe85c"
             radius={[4, 4, 0, 0]}
             maxBarSize={50}

@@ -61,12 +61,14 @@ async def compute_gate(conn, installation: dict, build: dict, artifact_digest: s
     failing = sorted(k for k, r in latest.items() if r["mandatory"] and r["status"] != "passed")
     build_evals_passed = bool(runs) and not missing and not failing
 
-    newest = await conn.fetch(
-        """SELECT DISTINCT ON (policy_key) id, policy_key, version, artifact_hash FROM policy_revisions
-           WHERE agent_id=$1 ORDER BY policy_key, created_at DESC""", installation["agent_id"])
+    # The build's own policy manifest (registered by the SDK with this build's deployment). Fail closed when a
+    # build declares no policies: there is nothing a customer has approved.
+    declared = await conn.fetch(
+        """SELECT bp.policy_key, r.id, r.version FROM build_policies bp JOIN policy_revisions r ON r.id = bp.revision_id
+           WHERE bp.build_id=$1 ORDER BY bp.policy_key""", build["id"])
     active = {r["revision_id"] for r in await conn.fetch(
         "SELECT revision_id FROM policy_activations WHERE installation_id=$1 AND active", installation["id"])}
-    unapproved = [f"{p['policy_key']}@{p['version']}" for p in newest if p["id"] not in active]
+    unapproved = [f"{p['policy_key']}@{p['version']}" for p in declared if p["id"] not in active]
 
     tenant_ok = await conn.fetchval(
         """SELECT EXISTS(SELECT 1 FROM vendor_customer_links WHERE vendor_org_id=$1 AND customer_org_id=$2 AND status='active')""",
@@ -74,13 +76,14 @@ async def compute_gate(conn, installation: dict, build: dict, artifact_digest: s
     checks = {
         "build_evals_passed": build_evals_passed,
         # Fail closed: an agent with no registered policies has nothing a customer has approved.
-        "required_policies_approved": bool(newest) and not unapproved,
+        "required_policies_approved": bool(declared) and not unapproved,
         "artifact_hash_matches": build["artifact_digest"] == artifact_digest,
         "tenant_access_valid": tenant_ok,
     }
     return {"eligible": all(checks.values()), "checks": checks,
             "details": {"missing_suites": missing, "failing_suites": failing, "unapproved_policies": unapproved,
-                        "no_policies_registered": not newest,
+                        "no_policies_registered": not declared,
+                        "declared_policies": [f"{p['policy_key']}@{p['version']}" for p in declared],
                         "suites": [{"suite_key": k, "status": r["status"], "summary": r["summary"]} for k, r in latest.items()]}}
 
 

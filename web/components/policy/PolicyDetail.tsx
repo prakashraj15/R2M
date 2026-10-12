@@ -1,10 +1,10 @@
 "use client";
 import Link from "next/link";
 import type { Policy } from "@/lib/types";
-import { useMock } from "@/components/MockProvider";
+import { useR2M } from "@/components/R2MProvider";
 import { Panel, Badge } from "@/components/ui/shared";
 export function PolicyDetail({ policy }: { policy: Policy }) {
-  const { state } = useMock();
+  const { state, role, dispatch } = useR2M();
   const review = state.approvals.find(
     (a) => a.kind === "policy" && a.policy === policy.id,
   );
@@ -26,22 +26,30 @@ export function PolicyDetail({ policy }: { policy: Policy }) {
             <strong>{policy.hook}</strong>
           </div>
           <div>
-            <div className="field-label">REQUESTED PERMISSION</div>
+            <div className="field-label">APPROVAL STATE</div>
             <strong>{policy.permission}</strong>
           </div>
           <div>
-            <div className="field-label">APPROVED DEPLOYMENT SCOPE</div>
+            <div className="field-label">GOVERNED TOOLS · SCOPE</div>
             <strong>
-              OpsPilot · Meridian Financial · production simulation
+              {policy.tool || "—"} · OpsPilot · Meridian Financial · production
             </strong>
           </div>
         </div>
-        <div className="field-label">CODE ARTIFACT DIGEST · ILLUSTRATIVE</div>
+        <div className="field-label">CODE ARTIFACT DIGEST (SHA-256 of the policy source)</div>
         <pre>{policy.hash}</pre>
         <div className="soft-note">
           Policies are defined in agent code. The dashboard reviews metadata and
           exact revisions; it does not edit executable rules.
         </div>
+        {role === "customer_security" && review?.status === "approved" && policy.permission === "Approved" && (
+          <button
+            className="button"
+            onClick={() => dispatch({ type: "revoke", id: review.id, reason: "Revoked from the policy workspace" })}
+          >
+            Revoke approval (takes effect on the next action)
+          </button>
+        )}
         <div className="link-row">
           <Link href="/approvals" className="text-link">
             Review history & decisions →

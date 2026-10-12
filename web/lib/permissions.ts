@@ -12,6 +12,6 @@ export const rolesFor: Record<Organization, Role[]> = {
 export const canReview = (role: Role) => role === "customer_security";
 export const canEvaluate = (role: Role) => role === "vendor_release_manager";
 export const canDeploy = (role: Role) => role === "vendor_release_manager";
-export const canRun = (role: Role) =>
-  role === "vendor_developer" || role === "vendor_release_manager";
+// Live: Meridian operations chats with OpsPilot; Atlas roles may too (vendor-only fault testing).
+export const canRun = (role: Role) => role !== "customer_security";
 export const isVendor = (role: Role) => role.startsWith("vendor_");

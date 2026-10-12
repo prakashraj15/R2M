@@ -2,15 +2,15 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
-import { useMock } from "@/components/MockProvider";
-import { components } from "@/lib/topology";
+import { useR2M } from "@/components/R2MProvider";
+import { DESK_URL } from "@/lib/live-adapter";
 import { AgentTopology } from "./AgentTopology";
 import { NodeInspector } from "./NodeInspector";
 import { PageHeader, Badge } from "@/components/ui/shared";
 export function Workspace() {
-  const { state } = useMock();
+  const { state, components } = useR2M();
   const [selected, setSelected] = useState("gateway");
-  const nodes = components(state.service.health);
+  const nodes = components;
   return (
     <>
       <PageHeader
@@ -18,7 +18,7 @@ export function Workspace() {
         title="OpsPilot"
         description="An operations agent with clear boundaries. Every component, connected."
         actions={
-          <Link className="button button-primary" href="/demo/agent">
+          <Link className="button button-primary" href={DESK_URL}>
             Run a scenario <ArrowUpRight size={15} />
           </Link>
         }
@@ -31,7 +31,7 @@ export function Workspace() {
           CUSTOMER <strong>Meridian Financial</strong>
         </span>
         <span>
-          ENVIRONMENT <strong>Production simulation</strong>
+          ENVIRONMENT <strong>Production</strong>
         </span>
         <Badge>{state.service.health}</Badge>
       </div>
@@ -56,10 +56,10 @@ export function Workspace() {
             <Badge>Unknown</Badge>
           </div>
         </section>
-        <NodeInspector component={nodes.find((n) => n.id === selected)!} />
+        {nodes.find((n) => n.id === selected) && <NodeInspector component={nodes.find((n) => n.id === selected)!} />}
       </div>
       <div className="section-note">
-        Topology is a frontend fixture. Missing telemetry remains Unknown. A
+        Topology is registered by the agent's SDK. Missing telemetry remains Unknown. A
         policy denial does not mean the service is broken.
       </div>
     </>

@@ -48,7 +48,15 @@ async def register(agent_id: UUID, body: PolicyRegistration, p: SdkPrincipal = D
             """SELECT EXISTS(SELECT 1 FROM agent_installations WHERE id=$1 AND agent_id=$2 AND customer_org_id=$3)""",
             body.installation_id, agent_id, p.customer_org_id):
         raise not_found("installation")
-    return {"policies": await policy_registry.register(conn, agent_id, body.policies, body.installation_id)}
+    build_id = None
+    if body.deployment_id:  # RLS + explicit checks: the deployment must be this agent's, at this customer
+        build_id = await conn.fetchval(
+            """SELECT d.build_id FROM deployments d JOIN agent_installations i ON i.id = d.installation_id
+               WHERE d.id=$1 AND i.agent_id=$2 AND i.customer_org_id=$3""",
+            body.deployment_id, agent_id, p.customer_org_id)
+        if not build_id:
+            raise not_found("deployment")
+    return {"policies": await policy_registry.register(conn, agent_id, body.policies, body.installation_id, build_id)}
 
 
 @router.post("/agents/{agent_id}/policies/{revision_id}/submit", status_code=201)

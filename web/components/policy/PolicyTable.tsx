@@ -1,6 +1,5 @@
 "use client";
-import { policies } from "@/lib/mock-data";
-import { useMock } from "@/components/MockProvider";
+import { useR2M } from "@/components/R2MProvider";
 import { Badge } from "@/components/ui/shared";
 export function PolicyTable({
   selected,
@@ -9,7 +8,7 @@ export function PolicyTable({
   selected: string;
   onSelect: (id: string) => void;
 }) {
-  const { state } = useMock();
+  const { state, policies } = useR2M();
   return (
     <div className="table-wrap">
       <table>

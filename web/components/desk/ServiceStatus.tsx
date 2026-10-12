@@ -1,9 +1,9 @@
 "use client";
-import { useMock } from "@/components/MockProvider";
+import { useR2M } from "@/components/R2MProvider";
 import { Badge } from "@/components/ui/shared";
 import { Server } from "lucide-react";
-export function SimulatedServiceStatus() {
-  const { state } = useMock();
+export function ServiceStatus() {
+  const { state } = useR2M();
   const s = state.service;
   return (
     <div className="service-state">
@@ -11,7 +11,7 @@ export function SimulatedServiceStatus() {
         <Server size={23} />
       </div>
       <h3>payments-api</h3>
-      <p>Meridian Financial · simulated production</p>
+      <p>Meridian Financial · production</p>
       <Badge>{s.health}</Badge>
       <div className="service-metrics">
         <div>

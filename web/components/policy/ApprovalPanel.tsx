@@ -2,13 +2,13 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { Approval } from "@/lib/types";
-import { useMock } from "@/components/MockProvider";
+import { useR2M } from "@/components/R2MProvider";
 import { canReview } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Badge, Panel } from "@/components/ui/shared";
 export function ApprovalPanel({ approval }: { approval: Approval }) {
   const [reason, setReason] = useState("");
-  const { state, role, dispatch } = useMock();
+  const { state, role, dispatch } = useR2M();
   const run = state.runs.find((r) => r.id === approval.executionId);
   const policyReady =
     approval.kind === "policy" ||
@@ -34,7 +34,7 @@ export function ApprovalPanel({ approval }: { approval: Approval }) {
           <span>Governing policy</span>
           <strong>{approval.policy}</strong>
         </div>
-        <div className="field-label">BOUND REVISION / ACTION DIGEST · MOCK</div>
+        <div className="field-label">BOUND REVISION / ACTION DIGEST (SHA-256)</div>
         <pre>{approval.digest}</pre>
         {approval.kind === "action" && (
           <div className="soft-note">
@@ -67,7 +67,7 @@ export function ApprovalPanel({ approval }: { approval: Approval }) {
                   })
                 }
               >
-                Approve in demo
+                Approve
               </Button>
               <Button
                 disabled={!canReview(role) || !reason.trim()}
@@ -99,7 +99,7 @@ export function ApprovalPanel({ approval }: { approval: Approval }) {
         ) : (
           <div className="soft-note">
             {approval.reviewedBy} ·{" "}
-            {approval.reason || "Approved in the initial fixture."}
+            {approval.reason || "No reason recorded."}
           </div>
         )}
         {run && (

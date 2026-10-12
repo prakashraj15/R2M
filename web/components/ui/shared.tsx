@@ -1,4 +1,6 @@
+"use client";
 import type { ReactNode } from "react";
+import { motion, rise } from "./motion";
 import { ArrowUpRight, FlaskConical } from "lucide-react";
 export function Badge({
   children,
@@ -60,7 +62,7 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={`panel ${className}`}>
+    <motion.section className={`panel ${className}`} variants={rise} initial="hidden" animate="show">
       <div className="panel-heading">
         <div>
           <h2>{title}</h2>
@@ -69,7 +71,7 @@ export function Panel({
         {action}
       </div>
       {children}
-    </section>
+    </motion.section>
   );
 }
 export function Empty({

@@ -8,10 +8,10 @@ from ..errors import ApiError
 from ..schemas import DemoSessionIn
 from ..services.evidence_builder import audit
 
-router = APIRouter(tags=["demo-auth"])
+router = APIRouter(tags=["session"])
 
 
-@router.get("/demo/identities")
+@router.get("/auth/identities")
 async def identities(conn=Depends(db)):
     rows = await conn.fetch(
         """SELECT u.email, u.display_name, o.name AS organization, o.kind AS organization_kind, m.role
@@ -20,7 +20,7 @@ async def identities(conn=Depends(db)):
     return {"identities": [dict(r) for r in rows], "notice": "Demo identities only. Not production authentication."}
 
 
-@router.post("/demo/session")
+@router.post("/auth/session")
 async def create_session(body: DemoSessionIn, request: Request, response: Response, conn=Depends(db),
                          cfg: Settings = Depends(settings)):
     user = await conn.fetchrow("SELECT id FROM users WHERE email=$1 AND is_demo", body.email.lower())
@@ -33,7 +33,7 @@ async def create_session(body: DemoSessionIn, request: Request, response: Respon
     return {"ok": True}
 
 
-@router.delete("/demo/session")
+@router.delete("/auth/session")
 async def end_session(response: Response):
     response.delete_cookie(SESSION_COOKIE, path="/")
     return {"ok": True}

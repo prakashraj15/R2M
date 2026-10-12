@@ -9,12 +9,14 @@ import {
   Clock3,
   CircleX,
 } from "lucide-react";
-import { useMock } from "@/components/MockProvider";
+import { useR2M } from "@/components/R2MProvider";
 import type { Scenario } from "@/lib/types";
 import { canRun } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
+import { cp } from "@/lib/live-adapter";
+import { motion } from "@/components/ui/motion";
 export function AgentChat({ scenario }: { scenario: Scenario }) {
-  const { state, role, dispatch } = useMock();
+  const { state, role, dispatch } = useR2M();
   const [input, setInput] = useState("");
   const messages = state.runs.filter((run) => run.prompt).toReversed();
   const pending = state.runs.some((run) => run.status === "waiting_approval");
@@ -40,13 +42,16 @@ export function AgentChat({ scenario }: { scenario: Scenario }) {
               <br />
               Act only within an approved boundary.
             </p>
-            <span className="badge gray">
-              Deterministic demo · Not a live LLM
-            </span>
+            <span className="badge green">Live agent · governed by R2M</span>
           </div>
         )}
         {messages.map((run) => (
-          <div className="chat-exchange" key={run.id}>
+          <motion.div
+            className="chat-exchange"
+            key={`${run.id}-${run.decision ?? ""}`}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
             <div className="chat-message user">
               <User size={16} />
               <p>{run.prompt}</p>
@@ -75,20 +80,24 @@ export function AgentChat({ scenario }: { scenario: Scenario }) {
                       </div>
                     ))}
                 </div>
-                {run.status === "waiting_approval" && (
-                  <Link className="button" href="/approvals">
-                    Review pending action →
-                  </Link>
+                {run.decision && (
+                  <p>
+                    <strong>R2M decision:</strong> {run.decision} {(run.reasons || []).join(", ")}
+                  </p>
                 )}
-                <Link
-                  className="text-link"
-                  href={`/agents/opspilot/traces?trace=${run.traceId}`}
-                >
-                  Open R2M trace ↗
-                </Link>
+                {run.status === "waiting_approval" && (
+                  <a className="button" href={cp("/approvals")}>
+                    Review pending action →
+                  </a>
+                )}
+                {run.traceId && (
+                  <a className="text-link" href={cp(`/agents/opspilot/traces?trace=${run.traceId}`)}>
+                    Open R2M trace ↗
+                  </a>
+                )}
               </div>
             </div>
-          </div>
+          </motion.div>
         ))}
       </div>
       <div className="chat-input">
@@ -105,15 +114,15 @@ export function AgentChat({ scenario }: { scenario: Scenario }) {
             onChange={(event) => setInput(event.target.value)}
             placeholder={
               pending
-                ? "Resolve the pending approval to continue…"
+                ? "After approving in R2M, say “approved, continue”…"
                 : "Ask OpsPilot to inspect payments-api…"
             }
-            disabled={!canRun(role) || pending || !released}
+            disabled={!canRun(role) || !released}
           />
           <Button
             variant="default"
-            aria-label="Send demo message"
-            disabled={!canRun(role) || pending || !released || !input.trim()}
+            aria-label="Send message"
+            disabled={!canRun(role) || !released || !input.trim()}
             type="submit"
           >
             <ArrowUp size={18} />
@@ -123,8 +132,8 @@ export function AgentChat({ scenario }: { scenario: Scenario }) {
           {!released
             ? "Build proposed: complete build evaluations, policy approval and release before sending a message."
             : !canRun(role)
-              ? "Choose Atlas developer or release manager to run a scenario."
-              : `Selected scenario controls the simulated outcome: ${scenario}. Your message is context only.`}
+              ? "Security reviewers approve in R2M; switch to Operations or Atlas developer to chat."
+              : `Live agent · scenario: ${scenario}. Replies can take up to 40 s.`}
         </p>
       </div>
     </div>

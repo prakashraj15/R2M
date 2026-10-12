@@ -20,7 +20,7 @@ dependencies = [
 test = ["pytest==9.1.1"]
 
 [tool.setuptools.packages.find]
-include = ["r2m_platform*", "mock_agent*"]
+include = ["r2m_platform*", "mock_agent*", "opspilot_service*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

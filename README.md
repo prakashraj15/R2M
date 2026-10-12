@@ -24,20 +24,33 @@ AI agents are starting to restart services, scale clusters and roll back deploym
 
 ## Architecture
 
+Two separate apps in two containers. The agent is a vendor app that reaches R2M only over the network.
+
 ```
-Browser ── Next.js UI (:3000) ── /api/* proxy ──► R2M Platform API (FastAPI, private :8000)
-                                                       │            │
-                                     Postgres on Aiven ◄┘            └► Keewano (events out, MCP query in)
-                                     (TLS, row-level security)
-OpsPilot agent (OpenAI) ── R2M SDK (per-customer token) ──► /actions/authorize ──► grant
-        └── guarded tools ──► simulated payments-api (re-checks the grant)
+┌──────── opspilot (:3001) ─────────┐            ┌──────── r2m (:3000) ───────────────┐
+│ Operations Desk UI (Next.js)      │            │ Control Plane UI (Next.js)         │
+│ OpsPilot agent API (FastAPI)      │── SDK ────►│ R2M Platform API (FastAPI)         │
+│  mock_agent + r2m SDK + OpenAI    │   HTTP     │  authorize · ingest · approvals    │
+│  per-customer SDK token           │            │  /sim: simulated payments-api      │
+└───────────────────────────────────┘            └────────┬──────────────┬────────────┘
+                                                           ▼              ▼
+                                           Postgres on Aiven     Keewano (events out,
+                                           (TLS, row-level        MCP query in)
+                                            security)
 ```
 
-One Docker image, one container, one public port (3000).
+| Container | Image | Public URL | Contains |
+|---|---|---|---|
+| `r2m` | `r2m-control-plane` | http://localhost:3000 | Platform API (private :8000) + Control Plane UI |
+| `opspilot` | `opspilot` | http://localhost:3001 | Agent API (private :8100) + Operations Desk UI. No database access, only an SDK token |
 
 ## Live demo walkthrough
 
-Open **http://localhost:3000** and pick an identity in the top-right dropdown. Live agent replies take 20–40 s.
+There are two apps:
+- **Control Plane** (http://localhost:3000): approvals, policies, release, traces, costs and evidence. The role switcher signs you in as that demo identity.
+- **Operations Desk** (http://localhost:3001): chat with OpsPilot. Its "Review in R2M" and "Open R2M trace" links open the Control Plane.
+
+Live agent replies take 20–40 s.
 
 | Identity | Role |
 |---|---|
@@ -47,11 +60,11 @@ Open **http://localhost:3000** and pick an identity in the top-right dropdown. L
 | Atlas Applied AI · `vendor_release_manager` | Evaluates and deploys builds |
 
 **1. Live run, start to end**
-1. As **customer_ops**, open **OpsPilot chat**, reset the **degraded** scenario, and send *"payments-api is throwing errors, please fix it"*.
+1. In the **Operations Desk** (:3001), select the **degraded** scenario (this resets payments-api) and send *"payments-api is throwing errors, please fix it"*.
 2. OpsPilot observes and diagnoses, then asks Keewano. It proposes a **rollback to v2.0** (source: Keewano), which returns **REQUIRE_APPROVAL**.
-3. As **customer_security**, open **Approvals → Operational actions** and approve the exact action.
-4. As **customer_ops**, send *"approved, continue"*. You get **ALLOW → EXECUTE → VERIFY**, and payments-api is now v2.0 and healthy.
-5. In **Agent workspace → Traces**, the run shows spans, the policy decision, the single-use grant (applied and consumed) and the model cost.
+3. Click **Review in R2M**. In the **Control Plane** (:3000), as **Security reviewer**, approve the exact action under **Approvals**.
+4. Back in the desk, send *"approved, continue"*. You get **ALLOW → EXECUTE → VERIFY**, and payments-api is now v2.0 and healthy.
+5. Click **Open R2M trace**: spans, the policy decision, the single-use grant (applied and consumed) and the model cost.
 
 **2. Changing policy at runtime**
 1. As **customer_security**, revoke **DEPLOY-001**. The next rollback request is immediately **DENIED** (`POLICY_NOT_APPROVED`).
@@ -66,7 +79,7 @@ Open **http://localhost:3000** and pick an identity in the top-right dropdown. L
 - **In R2M:** the agent's reply shows `source: keewano` and the number of supporting incidents, and the Keewano status shows events sent and the last query.
 - **In the Keewano dashboard:** open the project to see the R2M event types (IDs 2000+) and the incoming events.
 
-A one-page backup console is at `/live`. The API reference is at `/api/v1/docs`.
+API references: http://localhost:3000/api/v1/docs (platform) and http://localhost:3001/agent-api/docs (agent).
 
 ## Run it
 
@@ -74,12 +87,15 @@ A one-page backup console is at `/live`. The API reference is at `/api/v1/docs`.
 ```bash
 cp .env.example .env     # DATABASE_URL (Aiven), SESSION_SIGNING_KEY, SDK_TOKEN_SECRET; optional OPENAI_*, KEEWANO_*
 # Aiven console → service → CA certificate → save as secrets/aiven-ca.pem
-docker compose up -d --build                         # migrations run automatically on start
+docker compose up -d r2m --build                     # platform first; migrations run on start
 docker compose exec r2m python scripts/seed_demo.py  # demo orgs, identities, agent, simulated service
+# per-customer token for the OpsPilot container (written to .env as OPSPILOT_SDK_TOKEN):
+docker compose exec r2m python scripts/sdk_token.py issue --vendor atlas-applied-ai --customer meridian-financial --label opspilot-agent
+docker compose up -d --build                         # starts opspilot once r2m is healthy
 ```
-Then open http://localhost:3000.
+Then open http://localhost:3000 (Control Plane) and http://localhost:3001 (Operations Desk).
 - **Smoke test:** `python scripts/smoke_test.py --base http://127.0.0.1:3000`
-- **Live end-to-end check:** `scripts/live_demo_check.py`. It changes demo state, so only run it against a demo database.
+- **End-to-end (agent ↔ platform over HTTP):** `pytest python/tests/test_opspilot_e2e.py` against a disposable database.
 
 **Keewano (optional):** set `KEEWANO_ENABLED=true` and the keys, then:
 ```bash
@@ -101,7 +117,11 @@ uv pip install -e python/r2m_sdk -e "python[test]"
 set -a; . ./.env; set +a
 python scripts/init_db.py && python scripts/seed_demo.py
 PYTHONPATH=python uvicorn r2m_platform.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers
-cd web && npm ci && npm run dev
+# agent service (separate process, talks to R2M over HTTP):
+R2M_API_URL=http://127.0.0.1:3000 OPSPILOT_SDK_TOKEN=… R2M_VENDOR_ORG_ID=… R2M_CUSTOMER_ORG_ID=… \
+  PYTHONPATH=python uvicorn opspilot_service.app:app --host 127.0.0.1 --port 8100
+cd web && npm ci && npm run dev                                                  # Control Plane on :3000
+cd web && NEXT_PUBLIC_R2M_APP=desk npx next dev --hostname 127.0.0.1 --port 3001  # Operations Desk
 ```
 
 ## Tests
@@ -122,27 +142,27 @@ The tests cover tenant isolation on every endpoint, cross-tenant access by direc
 | `python/r2m_platform/` | FastAPI platform: auth, tenancy, release gate, action gate, ingestion, metrics, evidence, Keewano outbox |
 | `python/r2m_sdk/` | Installable agent SDK: tracing, `@tool` gate, code-owned policies, grant verification |
 | `python/mock_agent/` | OpsPilot agent: workflow, live OpenAI mode, policies, tools, evals |
-| `web/` | Next.js app: live UI (`/demo/agent`, `/approvals`, agent workspace), plus `/live` and `/session` |
+| `python/opspilot_service/` | OpsPilot agent API (separate container): HTTP world over R2M's `/sim` endpoints |
+| `web/` | One Next.js codebase, built twice: Control Plane (`NEXT_PUBLIC_R2M_APP=control`) and Operations Desk (`=desk`). Framer Motion transitions |
 | `db/migrations/` | Schema, invariant triggers, row-level security, one-round-trip SDK functions |
 | `scripts/` | DB init and seed, evals, SDK tokens, Keewano setup, smoke and live checks |
-| `docker/`, `Dockerfile`, `compose.yaml` | Single-container build and supervisor |
+| `Dockerfile`, `Dockerfile.opspilot`, `compose.yaml`, `docker/` | Two images and containers, plus their supervisors and health checks |
 
 ## Docs
 
 | Doc | What |
 |---|---|
 | [`dev_docs/DEVELOPER_SPEC.md`](dev_docs/DEVELOPER_SPEC.md) | Product and build contract |
-| [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) | Demo narrative |
 | [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) | Browser API and agent hook |
 | [`docs/SDK_CONTRACT.md`](docs/SDK_CONTRACT.md) | SDK ↔ platform contract |
 | [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) | Tenancy, approvals, grants, row-level security, known gaps |
 | [`docs/KEEWANO.md`](docs/KEEWANO.md) | Keewano events and the MCP workflow |
 | [`docs/TEST_MATRIX.md`](docs/TEST_MATRIX.md) | Acceptance criteria mapped to tests |
-| [`docs/HANDOVER.md`](docs/HANDOVER.md), [`docs/FRONTEND_AGENT_HANDOVER.md`](docs/FRONTEND_AGENT_HANDOVER.md) | Team handover notes |
+| [`docs/HANDOVER.md`](docs/HANDOVER.md) | Team handover notes |
 
 ## Known limitations
 
 - Demo authentication: identities are picked from a list, with no passwords.
 - Synthetic data and a simulated `payments-api`; no real infrastructure, cloud or payment integration.
 - Not a compliance attestation. The evidence checksums detect tampering but are not WORM storage.
-- The "faulty build" chat scenario can error in live (OpenAI) mode. The release gate still blocks the faulty build.
+- The desk's operator selector (Operations vs Atlas developer) is a demo label, not authentication. The real controls are R2M's grants, the infrastructure check and the release gate.

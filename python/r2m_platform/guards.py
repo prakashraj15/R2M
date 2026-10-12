@@ -9,9 +9,8 @@ CSRF_HEADER = "x-r2m-csrf"
 
 # (method, path) overrides, else bucket by caller type. Limits are per minute.
 ROUTE_LIMITS = {
-    ("POST", "/api/v1/demo/session"): ("login", 60),
+    ("POST", "/api/v1/auth/session"): ("login", 60),
     ("POST", "/api/v1/integrations/keewano/query"): ("keewano", 10),
-    ("POST", "/api/v1/demo/agent/message"): ("agent", 30),
 }
 BROWSER_LIMIT, SDK_LIMIT, IP_LIMIT = 600, 3000, 3000
 

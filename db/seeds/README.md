@@ -1,6 +1,6 @@
 # Seed rules
 
-`scripts/seed_demo.py` is idempotent: every row uses `ON CONFLICT DO NOTHING`, so re-running it never resets live demo state. To reset the synthetic service, use `POST /api/v1/demo/agent/scenarios/{id}/reset`.
+`scripts/seed_demo.py` is idempotent: every row uses `ON CONFLICT DO NOTHING`, so re-running it never resets live demo state. To reset the synthetic service, use `POST /api/v1/operations/scenarios/{id}/reset`.
 
 All IDs are deterministic UUIDv5:
 

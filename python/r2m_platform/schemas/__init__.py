@@ -198,6 +198,17 @@ class IncidentUpdateIn(Strict):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class SimActionIn(Strict):
+    tool: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_.:-]{0,99}$")
+    changes: dict[str, Any] = Field(default_factory=dict)
+    execution_id: UUID | None = None
+
+
+class SimInsightIn(Strict):
+    installation_id: UUID | None = None  # default: the SDK token's own installation
+    question: str = Field(min_length=3, max_length=500)
+
+
 class IntegrationToggleIn(Strict):
     organization_id: UUID
     enabled: bool
@@ -207,7 +218,3 @@ class KeewanoQueryIn(Strict):
     installation_id: UUID
     question: str = Field(min_length=3, max_length=500)
 
-
-class DemoMessageIn(Strict):
-    message: str = Field(min_length=1, max_length=2000)
-    scenario: Literal["healthy", "degraded", "approval", "faulty"] = "degraded"

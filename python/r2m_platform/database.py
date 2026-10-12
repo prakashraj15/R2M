@@ -50,6 +50,9 @@ async def _init_connection(conn: asyncpg.Connection) -> None:
     for typename in ("json", "jsonb"):
         await conn.set_type_codec(typename, encoder=_dumps, decoder=json.loads, schema="pg_catalog")
     await conn.execute(f"SET ROLE {APP_ROLE}")  # non-owner, no BYPASSRLS: tenant policies always apply
+    # Safety nets: Postgres ends a session left idle inside a transaction (it would hold row locks), and a
+    # statement waiting on a lock fails fast instead of hanging the request.
+    await conn.execute("SET idle_in_transaction_session_timeout = '30s'; SET lock_timeout = '10s'")
 
 
 async def _on_acquire(conn: asyncpg.Connection) -> None:

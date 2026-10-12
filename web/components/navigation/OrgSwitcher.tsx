@@ -1,9 +1,9 @@
 "use client";
 import { Building2 } from "lucide-react";
-import { useMock } from "@/components/MockProvider";
+import { useR2M } from "@/components/R2MProvider";
 import type { Organization } from "@/lib/types";
 export function OrgSwitcher() {
-  const { org, setOrg } = useMock();
+  const { org, setOrg } = useR2M();
   return (
     <div className="org-switch">
       <Building2 size={17} />

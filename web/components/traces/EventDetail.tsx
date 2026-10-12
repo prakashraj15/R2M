@@ -19,7 +19,7 @@ export function EventDetail({ span }: { span: Span }) {
               status: span.status,
               policy: span.policy || null,
               capture: "metadata_only",
-              source: "simulated",
+              source: "r2m-sdk",
             },
             null,
             2,

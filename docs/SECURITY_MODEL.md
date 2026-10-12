@@ -22,6 +22,13 @@ The application filters by scope, and Postgres enforces the same scope underneat
 - **Tested.** `test_row_level_security_blocks_unscoped_queries` covers it, and it was verified on Aiven: an unscoped query sees 0 rows, and an audit UPDATE is denied.
 - **Limits.** RLS catches a query that forgets its tenant filter. It is **not** a defence against SQL injection, because the session can change its own settings. All SQL is parameterized.
 
+## Separation of the agent from the platform
+
+- **Two containers.** The OpsPilot agent (vendor app) and the R2M platform run in separate containers built from separate images. The agent image contains no platform code and has **no database credentials**: compose passes it only its SDK token, org ids, the R2M URL and model settings.
+- **One way in.** The agent reaches R2M only over HTTP, through the SDK endpoints and `/sim`, with a **per-customer SDK token**. Row-level security limits every query to that token's vendor/customer pair.
+- **Server-side checks.** Changes to the simulated infrastructure go through `/sim/.../actions`, which applies a change only against a live single-use grant issued by `/actions/authorize`. The server does this check itself; it doesn't trust the agent.
+- **Demo persona only.** The desk's operator selector (Operations vs Atlas developer) is a demo persona, not authentication. Approvals and every other privileged action happen in the Control Plane under a signed session.
+
 ## Authentication
 
 | Caller | Mechanism | Notes |

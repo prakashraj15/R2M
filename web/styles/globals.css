@@ -2092,3 +2092,24 @@ pre {
     max-width: 240px;
   }
 }
+
+/* ---- Motion & interaction polish (framer-motion handles enter/route transitions) ---- */
+.sidebar nav a > :not(.nav-pill) { position: relative; z-index: 1; }
+.sidebar nav a.active { background: transparent; }
+.nav-pill { position: absolute; inset: 0; border-radius: 7px; background: #eaffb5; z-index: 0; }
+.button, .table-link, .text-link, .demo-link { transition: background 0.18s, color 0.18s, border-color 0.18s, box-shadow 0.18s, transform 0.12s; }
+.button:active:not(:disabled) { transform: scale(0.98); }
+.button:disabled { cursor: not-allowed; opacity: 0.55; }
+.panel { transition: box-shadow 0.2s ease, border-color 0.2s ease; }
+.panel:hover { box-shadow: 0 6px 24px #2b3a1a0f; }
+.metric-card { will-change: transform; }
+.chat-exchange { will-change: transform, opacity; }
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid #9fd23a; outline-offset: 2px; border-radius: 6px;
+}
+.toast { animation: toast-in 0.24s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.badge { transition: background 0.2s, color 0.2s; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+}

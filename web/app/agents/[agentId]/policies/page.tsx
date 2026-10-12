@@ -1,11 +1,12 @@
 "use client";
+import { useR2M } from "@/components/R2MProvider";
 import { useState } from "react";
 import { PageHeader, Panel } from "@/components/ui/shared";
 import { PolicyTable } from "@/components/policy/PolicyTable";
 import { PolicyDetail } from "@/components/policy/PolicyDetail";
-import { policies } from "@/lib/mock-data";
 import Link from "next/link";
 export default function Page() {
+  const { policies } = useR2M();
   const [id, setId] = useState("DEPLOY-001");
   return (
     <>
@@ -26,7 +27,11 @@ export default function Page() {
         <PolicyTable selected={id} onSelect={setId} />
       </Panel>
       <div className="section-gap">
-        <PolicyDetail policy={policies.find((p) => p.id === id)!} />
+        {policies.find((p) => p.id === id) ? (
+          <PolicyDetail policy={policies.find((p) => p.id === id)!} />
+        ) : (
+          <p className="soft-note">Select a policy. Policies appear once OpsPilot registers them.</p>
+        )}
       </div>
     </>
   );

@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1.7
+# OpsPilot (vendor app): agent API (private 127.0.0.1:8100) + Operations Desk web app (public :3001).
+# No R2M platform code or database access: the agent reaches R2M only over HTTP with its per-customer SDK token.
+
+FROM node:22.12.0-bookworm-slim AS node-runtime
+
+FROM node-runtime AS web-build
+ARG NEXT_PUBLIC_CONTROL_URL=http://localhost:3000
+ARG NEXT_PUBLIC_DESK_URL=http://localhost:3001
+ENV NEXT_PUBLIC_R2M_APP=desk NEXT_PUBLIC_CONTROL_URL=$NEXT_PUBLIC_CONTROL_URL \
+    NEXT_PUBLIC_DESK_URL=$NEXT_PUBLIC_DESK_URL NEXT_TELEMETRY_DISABLED=1
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
+FROM python:3.12.8-slim-bookworm
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+
+WORKDIR /app
+COPY python/pyproject.toml /app/python/pyproject.toml
+COPY python/r2m_sdk/ /app/python/r2m_sdk/
+COPY python/mock_agent/ /app/python/mock_agent/
+COPY python/opspilot_service/ /app/python/opspilot_service/
+RUN pip install --no-cache-dir /app/python/r2m_sdk /app/python
+COPY scripts/run_evals.py /app/scripts/
+COPY docker/ /app/docker/
+COPY --from=web-build /src/web/.next/standalone /app/web
+COPY --from=web-build /src/web/.next/static /app/web/.next/static
+COPY --from=web-build /src/web/public /app/web/public
+
+RUN useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin opspilot \
+    && chmod 0555 /app/docker/entrypoint-opspilot.sh
+USER opspilot
+EXPOSE 3001
+ENTRYPOINT ["/app/docker/entrypoint-opspilot.sh"]

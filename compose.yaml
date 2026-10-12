@@ -1,9 +1,13 @@
+# Two apps, two images, two containers:
+#   r2m       R2M Control Plane (platform API + Control Plane UI)   http://localhost:3000
+#   opspilot  OpsPilot vendor agent (agent API + Operations Desk)   http://localhost:3001
+# OpsPilot reaches R2M only over the network (http://r2m:3000/api) with its per-customer SDK token.
 services:
   r2m:
     build:
       context: .
       dockerfile: Dockerfile
-    image: r2m:prototype
+    image: r2m-control-plane:prototype
     ports:
       - "127.0.0.1:3000:3000"
     env_file:
@@ -23,3 +27,34 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+  opspilot:
+    build:
+      context: .
+      dockerfile: Dockerfile.opspilot
+    image: opspilot:prototype
+    ports:
+      - "127.0.0.1:3001:3001"
+    # Least privilege: only what the agent needs (no database, session or Keewano secrets).
+    environment:
+      R2M_API_URL: http://r2m:3000
+      R2M_CONTROL_PLANE_URL: http://localhost:3000
+      OPSPILOT_SDK_TOKEN: ${OPSPILOT_SDK_TOKEN:?issue one with scripts/sdk_token.py and put it in .env}
+      R2M_VENDOR_ORG_ID: b5333f96-384a-5bf6-9841-589df8574da5     # Atlas Applied AI (seed id)
+      R2M_CUSTOMER_ORG_ID: 45a47bd0-ae2c-55b1-9bce-6a70902564e3   # Meridian Financial (seed id)
+      R2M_ENVIRONMENT: production
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPSPILOT_LLM_MODE: ${OPSPILOT_LLM_MODE:-}
+      HEALTH_URLS: http://127.0.0.1:8100/agent-api/health,http://127.0.0.1:3001/
+    depends_on:
+      r2m:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "python", "docker/healthcheck.py"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

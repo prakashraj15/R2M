@@ -1,4 +1,6 @@
+"use client";
 import { ArrowUpRight } from "lucide-react";
+import { motion, rise } from "@/components/ui/motion";
 export function MetricCard({
   label,
   value,
@@ -11,13 +13,19 @@ export function MetricCard({
   accent?: boolean;
 }) {
   return (
-    <div className={`metric-card ${accent ? "accent" : ""}`}>
+    <motion.div
+      className={`metric-card ${accent ? "accent" : ""}`}
+      variants={rise}
+      initial="hidden"
+      animate="show"
+      whileHover={{ y: -2 }}
+    >
       <div>
         {label}
         <ArrowUpRight size={13} />
       </div>
       <strong>{value}</strong>
       <small>{detail}</small>
-    </div>
+    </motion.div>
   );
 }

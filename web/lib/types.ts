@@ -47,6 +47,15 @@ export interface Execution {
   cost: number;
   recommendation: string;
   prompt?: string;
+  // Live agent turn details (Operations Desk)
+  decision?: string;
+  reasons?: string[];
+  proposal?: { tool: string | null; arguments: Record<string, unknown>; source?: string; rationale?: string };
+  insight?: { status?: string; supported?: boolean; sample_count?: number; best?: unknown; [k: string]: unknown };
+  actionId?: string;
+  approvalId?: string;
+  modelCalls?: number;
+  costSources?: string[];
 }
 export interface Approval {
   id: string;
@@ -78,6 +87,10 @@ export interface Build {
   deployed: boolean;
   releaseEvaluated?: boolean;
   cases: TestCase[];
+  // Live release state (Control Plane)
+  deploymentId?: string;
+  deploymentStatus?: string;
+  gate?: { evaluations: boolean; policies: boolean; artifact: boolean; scope: boolean };
 }
 export interface ServiceState {
   version: string;
@@ -94,7 +107,7 @@ export interface AuditEvent {
   detail: string;
   at: string;
 }
-export interface MockState {
+export interface AppState {
   approvals: Approval[];
   builds: Build[];
   runs: Execution[];

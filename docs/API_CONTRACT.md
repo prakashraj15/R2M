@@ -29,7 +29,7 @@ Base path `/api/v1`. The browser reaches it through the Next.js `/api/*` proxy o
 
 ## Authentication
 
-- **Browser:** `POST /demo/session {"email"}` sets an HMAC-signed `r2m_session` cookie (`HttpOnly`, `SameSite=Lax`, 8 h). Only seeded `is_demo` users are accepted. **This is demo auth, not production auth.**
+- **Browser:** `POST /auth/session {"email"}` sets an HMAC-signed `r2m_session` cookie (`HttpOnly`, `SameSite=Lax`, 8 h). Only seeded `is_demo` users are accepted. **This is demo auth, not production auth.**
 - **CSRF:** every browser write, login included, must send the header **`X-R2M-CSRF: 1`**. GETs don't need it.
 - **SDK / scripts:** `Authorization: Bearer <per-customer SDK token>`, scoped to one vendor+customer pair. Issue one with `python scripts/sdk_token.py issue --vendor <slug> --customer <slug> --label <name>` (or `list`, `revoke <id>`). The demo route passes the agent its own token as `context["sdk_token"]`. This is accepted only on `POST /agents`, `/ingest/events`, `/actions/*`, `/agents/{id}/policies/register` and `POST /agents/{id}/evaluations`.
 
@@ -51,8 +51,8 @@ Permissions by role: `GET /me` returns them per org. The source of truth is `PER
 |---|---|---|
 | GET | `/health/live` | unauthenticated, no DB |
 | GET | `/health/ready` | `{"status":"ready"}` or 503; no driver detail |
-| GET | `/demo/identities` | allowlisted identities for the login picker |
-| POST/DELETE | `/demo/session` | sign in as `{email}` / sign out |
+| GET | `/auth/identities` | allowlisted identities for the login picker |
+| POST/DELETE | `/auth/session` | sign in as `{email}` / sign out |
 | GET | `/me` | user, orgs, roles, permissions, `demo_auth: true` |
 | GET | `/organizations` | the caller's orgs only |
 | GET | `/organizations/{orgId}/overview?range=` | `metrics` (6 KPIs below), `agents` registry rows, `integrations` |
@@ -75,9 +75,8 @@ Permissions by role: `GET /me` returns them per org. The source of truth is `PER
 | GET | `/agents/{id}/evidence/export` | bundle with `manifest_sha256` (customer_security / vendor_release_manager); audited |
 | GET/PUT | `/integrations/keewano` | status (`platform_enabled`, `adapter_installed`, per-org enabled/backlog/dead) / `{organization_id, enabled}` (customer_security) |
 | POST | `/integrations/keewano/query` | `{installation_id, question}` → `{status: ok\|failed\|unavailable, insight_id, result, trust: "untrusted advisory data"}` |
-| POST | `/demo/agent/message?installation_id` | `{message, scenario: healthy\|degraded\|approval\|faulty}` → the agent's dict, sanitized |
-| POST | `/demo/agent/scenarios/{id}/reset` | restores synthetic `payments-api`, expires open runtime approvals and resolves the installation's open incidents (only when `APP_ENV=demo`). Returns `{scenario, service, incidents_resolved}`; history is kept |
-| GET | `/demo/agent/state` | `services[]`, `scenarios`, `recent_actions[]` (with `authorized`), `approvals[]`, `last_execution` |
+| POST | `/operations/scenarios/{id}/reset` | restores synthetic `payments-api`, expires open runtime approvals and resolves the installation's open incidents (only when `APP_ENV=demo`). Returns `{scenario, service, incidents_resolved}`; history is kept |
+| GET | `/operations/state` | `services[]`, `scenarios`, `recent_actions[]` (with `authorized`), `approvals[]`, `last_execution` |
 
 **Overview/agent metric shape:** `deployed_agents`, `run_success{value,completed,finished,total,status}`, `unresolved_high_severity_findings`, `policy_enforcement_coverage{value,numerator,denominator,explanation}`, `cost{total_usd,by_source{observed,estimated,allocated,simulated},input_tokens,output_tokens,provenance_note}`, `p95_action_latency_ms`.
 
@@ -117,27 +116,34 @@ Grant key: the calling agent's own SDK token, which is what `GrantVerifier(grant
 
 The response is `{run_id, build_id, status, summary}`. A run fails if any mandatory case fails or errors. The gate then requires the latest run of every mandatory suite this agent has ever run to be `passed` for that build. Use the **same** `artifact_digest` that the agent passes to `register_agent`; that ties evals, release and runtime to one build.
 
-## Agent hook (backend ⇄ AI)
+## External agent: `/sim` endpoints (SDK token)
 
-`POST /demo/agent/message` calls `mock_agent.agent.handle_message(message: str, scenario: str, context: dict) -> dict`.
+OpsPilot runs in its **own container** and reaches R2M only over HTTP, through the SDK endpoints above plus these. All of them take a per-customer SDK token and are row-level-security scoped to that token's vendor/customer pair.
 
-- **Threading.** It runs in a worker thread. A sync function is called directly; a coroutine function is run with `asyncio.run` in that thread. Either way, the SDK's loopback calls to `context["api_url"]` cannot deadlock the server.
-- **Context.** `context` holds `world`, `sdk_token`, `agent_id`, `installation_id`, `deployment_id`, `build_version` (the currently deployed build), `customer_org_id`, `vendor_org_id`, `environment` (`production`), `api_url`, `request_id`, `actor{user_id,email,roles}`. Build `R2MClient(token=context["sdk_token"], ...)` from these. The client's own `register_agent` returns the deployment id for *its* build.
-- **Return value.** Return something JSON-able, e.g. `{reply, execution_id, trace_id, decision, action_id, approval_id, state}`. Secret-looking keys are redacted before the browser sees them.
+| Method | Path | Body / result |
+|---|---|---|
+| GET | `/sim/services/{service_key}` | Simulated service state: `deployment_version, previous_version, replicas, cpu_pct, memory_pct, error_rate_pct, p95_latency_ms, health_status` |
+| GET | `/sim/services/{service_key}/history` | `{actions: [...]}`: the last 20 simulated actions (`authorized` true or false) |
+| POST | `/sim/services/{service_key}/actions` | `{tool, changes, execution_id}` → `{applied: true, action_id, before, after}`, or `{applied: false, reason, incident_id}` |
+| POST | `/sim/scenarios/{id}/reset` | Restore the baseline for `healthy`, `degraded`, `approval` or `faulty` (only when `APP_ENV=demo`) |
+| POST | `/sim/insights` | `{question, installation_id?}` → Keewano answer (`status, sample_count, result, trust`). Advisory only |
 
-`context["world"]` (`SimulationWorld`, synchronous):
+An action is **applied only if** `/actions/authorize` issued a live, not-yet-applied grant for the same execution and tool. The agent calls it from inside its guarded tool, passing `r2m.current_execution().execution_id`. A call without a grant (an unguarded tool, as in the faulty build) changes nothing, is recorded as `authorized=false`, and opens a **critical** `unauthorized_action_attempt` incident.
 
-| Method | Returns |
-|---|---|
-| `get_service(service_key="payments-api")` | `deployment_version, previous_version, replicas, cpu_pct, memory_pct, error_rate_pct, p95_latency_ms, health_status` |
-| `deployment_history(service_key=...)` | last 20 simulated actions |
-| `apply_action(tool, changes, execution_id)` | `{applied: True, action_id, before, after}`, or `{applied: False, reason, incident_id}` |
+### OpsPilot agent API (the `opspilot` container, for the Operations Desk)
 
-Call `apply_action` **inside the guarded tool body**, passing `r2m.current_execution().execution_id`. It atomically claims the live grant that `/actions/authorize` issued for that execution and tool, and a grant can be applied once.
+The desk proxies `/agent-api/*` to this private listener, `127.0.0.1:8100`.
 
-With no grant (an unguarded call, as in the faulty build), nothing changes. An `authorized=false` simulation action is recorded and a **critical** `unauthorized_action_attempt` incident is opened.
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/agent-api/health` | `{status, configured}` |
+| GET | `/agent-api/state` | `{service, history, scenarios, control_plane_url}` |
+| POST | `/agent-api/message` | `{message, scenario: healthy\|degraded\|approval\|faulty, operator: customer_ops\|vendor_developer}` → the agent's reply: `decision, reasons, steps, proposal, keewano, trace_id, action_id, approval_id` |
+| POST | `/agent-api/scenarios/{id}/reset` | Proxies `/sim/scenarios/{id}/reset` |
 
-`changes` may only touch the state fields above. See `python/tests/opspilot_stub.py` for a minimal working agent.
+**Configuration** (environment): `R2M_API_URL`, `OPSPILOT_SDK_TOKEN`, `R2M_VENDOR_ORG_ID`, `R2M_CUSTOMER_ORG_ID`, `R2M_ENVIRONMENT`, `R2M_CONTROL_PLANE_URL`, `OPENAI_*`.
+
+The `operator` field is a demo persona: only `vendor_developer` is offered fault injection. It is **not** authentication; the real controls are R2M's grants, the infrastructure check and the release gate.
 
 ## Keewano adapter hook (backend ⇄ AI)
 

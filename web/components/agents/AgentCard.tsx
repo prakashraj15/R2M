@@ -1,15 +1,14 @@
 "use client";
 import Link from "next/link";
 import { Bot, ArrowUpRight } from "lucide-react";
-import { useMock } from "@/components/MockProvider";
-import { releaseChecks } from "@/lib/mock-engine";
+import { useR2M } from "@/components/R2MProvider";
+import { releaseChecks } from "@/lib/release";
 import { Badge } from "@/components/ui/shared";
 import { money } from "@/lib/format";
 export function AgentCard() {
-  const { state } = useMock();
-  const eligible = Object.values(releaseChecks(state, "build-safe")).every(
-    Boolean,
-  );
+  const { state } = useR2M();
+  const deployed = state.builds.find((b) => b.deployed);
+  const eligible = state.builds.some((b) => Object.values(releaseChecks(state, b.id)).every(Boolean));
   return (
     <div className="table-wrap">
       <table>
@@ -37,7 +36,7 @@ export function AgentCard() {
               </Link>
             </td>
             <td>
-              Meridian Financial<small>Production simulation · safe-1.0</small>
+              Meridian Financial<small>Production · {deployed?.version ?? "no deployed build"}</small>
             </td>
             <td>
               <Badge>{state.service.health}</Badge>
@@ -53,7 +52,7 @@ export function AgentCard() {
             </td>
             <td>
               {money(state.runs.reduce((n, r) => n + r.cost, 0))}
-              <small>Simulated model cost</small>
+              <small>Model cost · recent runs</small>
             </td>
             <td>
               <Link

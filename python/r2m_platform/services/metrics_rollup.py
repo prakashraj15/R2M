@@ -69,14 +69,15 @@ async def summary(pool, installation_ids: list[UUID], start: datetime) -> dict:
         "policy_enforcement_coverage": {
             "value": round(cov["gated"] / cov["observed"], 4) if cov["observed"] else None,
             "numerator": cov["gated"], "denominator": cov["observed"],
-            "explanation": "Observed coverage: simulated infrastructure mutations that carried a valid single-use grant, "
-                           "divided by all mutations observed at the simulation boundary. Uninstrumented paths outside "
-                           "the simulation are not observable; this is not proof of complete coverage."},
+            "explanation": "Observed coverage: infrastructure mutations that carried a valid single-use grant, "
+                           "divided by all mutations observed at the governed infrastructure boundary. Uninstrumented "
+                           "paths are not observable; this is not proof of complete coverage."},
         "cost": {"total_usd": float(sum(c["usd"] or 0 for c in costs)),
                  "by_source": {c["cost_source"]: float(c["usd"] or 0) for c in costs},
                  "input_tokens": int(sum(c["input_tokens"] or 0 for c in costs)),
                  "output_tokens": int(sum(c["output_tokens"] or 0 for c in costs)),
-                 "provenance_note": "Mocked model usage is labeled simulated; no real cloud or model pricing is claimed."},
+                 "provenance_note": "Cost per source: provider-reported token usage priced by the agent, or an estimate where "
+                                    "the provider reports none. Infrastructure cost is not included."},
         "p95_action_latency_ms": round(p95, 3) if p95 is not None else None,
     }
 

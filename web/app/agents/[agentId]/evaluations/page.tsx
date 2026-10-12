@@ -2,16 +2,17 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Check, LockKeyhole, X } from "lucide-react";
-import { useMock } from "@/components/MockProvider";
-import { releaseChecks } from "@/lib/mock-engine";
+import { useR2M } from "@/components/R2MProvider";
+import { releaseChecks } from "@/lib/release";
 import { canEvaluate, canDeploy } from "@/lib/permissions";
 import { PageHeader, Panel, Badge } from "@/components/ui/shared";
 import { Button } from "@/components/ui/button";
 export default function Page() {
-  const { state, role, dispatch } = useMock();
-  const [id, setId] = useState("build-safe");
-  const build = state.builds.find((b) => b.id === id)!;
-  const checks = releaseChecks(state, id);
+  const { state, role, dispatch } = useR2M();
+  const [id, setId] = useState("");
+  const build = state.builds.find((b) => b.id === id) ?? state.builds[0];
+  if (!build) return <p className="soft-note">No builds yet. Builds appear when OpsPilot registers and CI uploads evaluations.</p>;
+  const checks = releaseChecks(state, build.id);
   const eligible = Object.values(checks).every(Boolean);
   return (
     <>
@@ -23,7 +24,7 @@ export default function Page() {
       />
       <Panel
         title="Build registry"
-        subtitle="Fixture outcomes—not an actual test runner"
+        subtitle="Uploaded by CI (scripts/run_evals.py)"
       >
         <div className="table-wrap">
           <table>
@@ -77,7 +78,7 @@ export default function Page() {
       <div className="two-column section-gap">
         <Panel
           title={`${build.version} · policy-regression-v1`}
-          subtitle="Expected versus actual, using the same build fixture"
+          subtitle="Expected versus actual for this build"
         >
           <div className="table-wrap">
             <table>
@@ -112,7 +113,7 @@ export default function Page() {
               onClick={() => dispatch({ type: "evaluate", id })}
               disabled={!canEvaluate(role)}
             >
-              Replay mock build checks
+              Refresh CI results
             </Button>
             {!canEvaluate(role) && (
               <p className="helper">
@@ -136,8 +137,8 @@ export default function Page() {
                       {
                         evaluations: "Mandatory evaluations pass",
                         policies: "Required policy revisions approved",
-                        artifact: "Artifact identity matches fixture",
-                        scope: "Demo customer scope matches",
+                        artifact: "Artifact digest matches the evaluated build",
+                        scope: "Customer scope matches",
                       }[key]
                     }
                   </span>
@@ -171,9 +172,7 @@ export default function Page() {
               }
               onClick={() => dispatch({ type: "deploy", id })}
             >
-              {build.deployed
-                ? "Deployed in simulation"
-                : "Simulate deployment"}
+              {build.deployed ? "Deployed" : "Deploy to production"}
             </Button>
             <div className="section-gap">
               <Link className="text-link" href="/approvals">

@@ -8,7 +8,7 @@ from .incident_detector import open_incident
 REVISION_COLUMNS = "r.id, r.agent_id, r.policy_key, r.version, r.description, r.artifact_hash, r.enforcement_point, r.definition_metadata, r.owner_user_id, r.created_at"
 
 
-async def register(conn, agent_id: UUID, policies, installation_id: UUID | None) -> list[dict]:
+async def register(conn, agent_id: UUID, policies, installation_id: UUID | None, build_id: UUID | None = None) -> list[dict]:
     """Idempotent per (key, version, hash). Same version with a different hash is tampering: not stored,
     reported with hash_matches=false (the SDK then fails closed) and raised as an incident."""
     out = []
@@ -37,6 +37,11 @@ async def register(conn, agent_id: UUID, policies, installation_id: UUID | None)
                                    WHERE installation_id=$1 AND revision_id=$2), 'registered') END""",
                     installation_id, rev_id)
                 status = {"approved": "registered", "rejected": "registered", "withdrawn": "registered"}.get(status, status)
+            if build_id:  # the build that ships this code declares this exact revision (release-gate manifest)
+                await conn.execute(
+                    """INSERT INTO build_policies(build_id, policy_key, revision_id) VALUES ($1,$2,$3)
+                       ON CONFLICT (build_id, policy_key) DO UPDATE SET revision_id=EXCLUDED.revision_id,
+                       registered_at=now()""", build_id, p.id, rev_id)
             out.append({"policy_id": p.id, "version": p.version, "artifact_hash": p.artifact_hash,
                         "revision_id": rev_id, "hash_matches": True, "status": status})
     return out

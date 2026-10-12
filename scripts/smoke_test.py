@@ -48,20 +48,20 @@ def main():
     check("authorize rejects wrong token",
           call(anon, base, "POST", "/actions/authorize", {}, {"authorization": "Bearer nope"})[0] == 401)
     check("write without CSRF header refused",
-          call(anon, base, "POST", "/demo/session", {"email": "ops@meridian.demo"}, {"x-r2m-csrf": ""})[0] == 403)
+          call(anon, base, "POST", "/auth/session", {"email": "ops@meridian.demo"}, {"x-r2m-csrf": ""})[0] == 403)
     check("forged SDK token refused",
           call(anon, base, "POST", "/ingest/events", {"events": []}, {"authorization": "Bearer r2m_sdk_" + "0" * 32 + "_" + "f" * 64})[0] == 401)
-    check("non-allowlisted identity refused", call(anon, base, "POST", "/demo/session", {"email": "x@evil.test"})[0] == 401)
+    check("non-allowlisted identity refused", call(anon, base, "POST", "/auth/session", {"email": "x@evil.test"})[0] == 401)
 
     meridian = client()
-    check("meridian login", call(meridian, base, "POST", "/demo/session", {"email": "security@meridian.demo"})[0] == 200)
+    check("meridian login", call(meridian, base, "POST", "/auth/session", {"email": "security@meridian.demo"})[0] == 200)
     status, agents = call(meridian, base, "GET", "/agents")
     check("meridian sees only its installations",
           status == 200 and agents["agents"] and all(a["customer_name"] == "Meridian Financial" for a in agents["agents"]))
     check("meridian overview", call(meridian, base, "GET", f"/organizations/{MERIDIAN}/overview")[0] == 200)
 
     northwind = client()
-    call(northwind, base, "POST", "/demo/session", {"email": "security@northwind.demo"})
+    call(northwind, base, "POST", "/auth/session", {"email": "security@northwind.demo"})
     check("northwind cannot read meridian overview", call(northwind, base, "GET", f"/organizations/{MERIDIAN}/overview")[0] == 404)
     if agents.get("agents"):
         inst = agents["agents"][0]

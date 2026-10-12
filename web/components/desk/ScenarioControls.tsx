@@ -1,6 +1,6 @@
 "use client";
 import type { Scenario } from "@/lib/types";
-import { useMock } from "@/components/MockProvider";
+import { useR2M } from "@/components/R2MProvider";
 import { Button } from "@/components/ui/button";
 import { canRun } from "@/lib/permissions";
 export function ScenarioControls({
@@ -10,7 +10,7 @@ export function ScenarioControls({
   scenario: Scenario;
   onChange: (scenario: Scenario) => void;
 }) {
-  const { reset, role, state } = useMock();
+  const { reset, role, state } = useR2M();
   const pending = state.runs.some((r) => r.status === "waiting_approval");
   return (
     <div className="scenario-controls">
@@ -47,8 +47,8 @@ export function ScenarioControls({
         Faulty-build testing is available in Build evaluations, not the runtime
         controls.
       </p>
-      <Button variant="ghost" disabled={!canRun(role)} onClick={reset}>
-        Reset demo session
+      <Button variant="ghost" disabled={!canRun(role)} onClick={() => reset()}>
+        Reset service to baseline
       </Button>
     </div>
   );

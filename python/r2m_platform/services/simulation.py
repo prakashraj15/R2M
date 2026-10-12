@@ -66,7 +66,61 @@ async def services(conn, customer_org_id: UUID) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def get_service(conn, customer_org_id: UUID, service_key: str = SERVICE_KEY) -> dict | None:
+    row = await conn.fetchrow("SELECT * FROM simulation_services WHERE customer_org_id=$1 AND service_key=$2",
+                              customer_org_id, service_key)
+    return {"service_key": service_key, **_state(row), "last_transition_at": row["last_transition_at"].isoformat()} if row else None
+
+
+async def history(conn, customer_org_id: UUID, service_key: str = SERVICE_KEY) -> list[dict]:
+    rows = await conn.fetch(
+        """SELECT sa.kind, sa.before_state, sa.after_state, sa.authorized, sa.created_at FROM simulation_actions sa
+           JOIN simulation_services s ON s.id = sa.service_id WHERE s.customer_org_id=$1 AND s.service_key=$2
+           ORDER BY sa.created_at DESC LIMIT 20""", customer_org_id, service_key)
+    return [{**dict(r), "created_at": r["created_at"].isoformat()} for r in rows]
+
+
+async def apply_action(conn, customer_org_id: UUID, installation_id: UUID, tool: str, changes: dict,
+                       execution_id, service_key: str = SERVICE_KEY) -> dict:
+    """Apply a state change only if /actions/authorize issued a live, unapplied grant for this execution and tool;
+    otherwise refuse, record an unauthorized simulation action and open a critical incident."""
+    unknown = set(changes) - set(STATE_FIELDS)
+    if unknown:
+        raise ValueError(f"unsupported state fields: {sorted(unknown)}")
+    async with conn.transaction():
+        svc = await conn.fetchrow(
+            "SELECT * FROM simulation_services WHERE customer_org_id=$1 AND service_key=$2 FOR UPDATE",
+            customer_org_id, service_key)
+        if not svc:
+            raise ValueError("unknown simulated service")
+        before = _state(svc)
+        grant = await claim_grant(conn, UUID(str(execution_id)), tool, customer_org_id) if execution_id else None
+        if not grant:
+            await conn.execute(
+                """INSERT INTO simulation_actions(service_id, kind, before_state, after_state, authorized)
+                   VALUES ($1,$2,$3,$3,false)""", svc["id"], tool, before)
+            incident = await open_incident(
+                conn, installation_id, "unauthorized_action_attempt", "critical",
+                f"{tool} reached the simulated infrastructure without a valid single-use grant; refused")
+            return {"applied": False, "reason": "missing_or_invalid_grant", "incident_id": str(incident), "state": before}
+        after = {**before, **changes}
+        await conn.execute(
+            """UPDATE simulation_services SET deployment_version=$2, previous_version=$3, replicas=$4, cpu_pct=$5,
+               memory_pct=$6, error_rate_pct=$7, p95_latency_ms=$8, health_status=$9, last_transition_at=now()
+               WHERE id=$1""", svc["id"], *(after[k] for k in STATE_FIELDS))
+        await conn.execute(
+            """INSERT INTO simulation_actions(service_id, tool_action_id, kind, before_state, after_state, authorized)
+               VALUES ($1,$2,$3,$4,$5,true)""", svc["id"], grant["action_id"], tool, before, after)
+        await record_evidence(conn, installation_id, "simulated_infrastructure_change",
+                              {"action_id": grant["action_id"], "grant_id": grant["id"], "tool": tool,
+                               "before": before, "after": after}, execution_id=grant["execution_id"])
+    return {"applied": True, "action_id": str(grant["action_id"]), "before": before, "after": after}
+
+
 class SimulationWorld:
+    """In-process, synchronous world for code running in a worker thread of this server (tests). The OpsPilot
+    container uses the equivalent HTTP endpoints in routers/sim.py instead."""
+
     def __init__(self, pool, customer_org_id: UUID, installation_id: UUID):
         self._pool, self.customer_org_id, self.installation_id = pool, customer_org_id, installation_id
 
@@ -77,62 +131,21 @@ class SimulationWorld:
             await apply_scope(conn, Scope((self.installation_id,), (self.customer_org_id,)))
             yield conn
 
-    # ---- sync API for the agent (call from the worker thread only) ----
     def get_service(self, service_key: str = SERVICE_KEY) -> dict:
-        return anyio.from_thread.run(self._get_service, service_key)
+        return anyio.from_thread.run(self._call, get_service, service_key)
 
     def deployment_history(self, service_key: str = SERVICE_KEY) -> list[dict]:
-        return anyio.from_thread.run(self._history, service_key)
+        return anyio.from_thread.run(self._call, history, service_key)
 
-    def apply_action(self, tool: str, changes: dict, execution_id: str | None,
-                     service_key: str = SERVICE_KEY) -> dict:
+    def apply_action(self, tool: str, changes: dict, execution_id: str | None, service_key: str = SERVICE_KEY) -> dict:
         """Call from inside the tool body with r2m.current_execution().execution_id."""
         return anyio.from_thread.run(self._apply, tool, changes, execution_id, service_key)
 
-    # ---- async implementations ----
-    async def _get_service(self, service_key):
+    async def _call(self, fn, service_key):
         async with self._conn() as conn:
-            row = await conn.fetchrow("SELECT * FROM simulation_services WHERE customer_org_id=$1 AND service_key=$2",
-                                      self.customer_org_id, service_key)
-        return {"service_key": service_key, **_state(row), "last_transition_at": row["last_transition_at"].isoformat()} if row else None
-
-    async def _history(self, service_key):
-        async with self._conn() as conn:
-            rows = await conn.fetch(
-                """SELECT sa.kind, sa.before_state, sa.after_state, sa.authorized, sa.created_at FROM simulation_actions sa
-                   JOIN simulation_services s ON s.id = sa.service_id WHERE s.customer_org_id=$1 AND s.service_key=$2
-                   ORDER BY sa.created_at DESC LIMIT 20""", self.customer_org_id, service_key)
-        return [{**dict(r), "created_at": r["created_at"].isoformat()} for r in rows]
+            return await fn(conn, self.customer_org_id, service_key)
 
     async def _apply(self, tool, changes, execution_id, service_key):
-        unknown = set(changes) - set(STATE_FIELDS)
-        if unknown:
-            raise ValueError(f"unsupported state fields: {sorted(unknown)}")
-        async with self._conn() as conn, conn.transaction():
-            svc = await conn.fetchrow(
-                "SELECT * FROM simulation_services WHERE customer_org_id=$1 AND service_key=$2 FOR UPDATE",
-                self.customer_org_id, service_key)
-            if not svc:
-                raise ValueError("unknown simulated service")
-            before = _state(svc)
-            grant = await claim_grant(conn, UUID(str(execution_id)), tool, self.customer_org_id) if execution_id else None
-            if not grant:
-                await conn.execute(
-                    """INSERT INTO simulation_actions(service_id, kind, before_state, after_state, authorized)
-                       VALUES ($1,$2,$3,$3,false)""", svc["id"], tool, before)
-                incident = await open_incident(
-                    conn, self.installation_id, "unauthorized_action_attempt", "critical",
-                    f"{tool} reached the simulated infrastructure without a valid single-use grant; refused")
-                return {"applied": False, "reason": "missing_or_invalid_grant", "incident_id": str(incident), "state": before}
-            after = {**before, **changes}
-            await conn.execute(
-                """UPDATE simulation_services SET deployment_version=$2, previous_version=$3, replicas=$4, cpu_pct=$5,
-                   memory_pct=$6, error_rate_pct=$7, p95_latency_ms=$8, health_status=$9, last_transition_at=now()
-                   WHERE id=$1""", svc["id"], *(after[k] for k in STATE_FIELDS))
-            await conn.execute(
-                """INSERT INTO simulation_actions(service_id, tool_action_id, kind, before_state, after_state, authorized)
-                   VALUES ($1,$2,$3,$4,$5,true)""", svc["id"], grant["action_id"], tool, before, after)
-            await record_evidence(conn, self.installation_id, "simulated_infrastructure_change",
-                                  {"action_id": grant["action_id"], "grant_id": grant["id"], "tool": tool,
-                                   "before": before, "after": after}, execution_id=grant["execution_id"])
-        return {"applied": True, "action_id": str(grant["action_id"]), "before": before, "after": after}
+        async with self._conn() as conn:
+            return await apply_action(conn, self.customer_org_id, self.installation_id, tool, changes, execution_id,
+                                      service_key)

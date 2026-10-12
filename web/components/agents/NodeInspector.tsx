@@ -4,10 +4,11 @@ import Link from "next/link";
 import type { ComponentInfo } from "@/lib/types";
 import { Badge } from "@/components/ui/shared";
 import { duration } from "@/lib/format";
-import { useMock } from "@/components/MockProvider";
+import { useR2M } from "@/components/R2MProvider";
 export function NodeInspector({ component }: { component: ComponentInfo }) {
   const [tab, setTab] = useState("Metrics");
-  const { state } = useMock();
+  const { state, policies } = useR2M();
+  const binding = ["tools", "gateway"].includes(component.id) ? policies : [];
   return (
     <aside className="panel inspector">
       <div className="panel-heading">
@@ -48,10 +49,10 @@ export function NodeInspector({ component }: { component: ComponentInfo }) {
             </div>
             <div className="kv">
               <span>Source</span>
-              <strong>Simulated fixture</strong>
+              <strong>Live telemetry</strong>
             </div>
             <div className="soft-note">
-              Metrics describe the design fixture, not a live SDK connection.
+              Metrics come from SDK spans in the last 24 h; missing telemetry is Unknown.
             </div>
           </>
         ) : tab === "Events" ? (
@@ -68,12 +69,16 @@ export function NodeInspector({ component }: { component: ComponentInfo }) {
           </div>
         ) : tab === "Policies" ? (
           <>
-            <Link className="text-link" href="/agents/opspilot/policies">
-              DEPLOY-001 · Rollback approval ↗
-            </Link>
+            {binding.map((p) => (
+              <Link className="text-link" href="/agents/opspilot/policies" key={p.id}>
+                {p.id} · {p.permission} · {p.tool} ↗
+              </Link>
+            ))}
             <p>
-              Policies bind to named tool boundaries. Scope is not inferred from
-              a green node.
+              {binding.length
+                ? "Policies bind to named tool boundaries and are enforced at the policy gate."
+                : "No policy binds directly to this component."}{" "}
+              Scope is not inferred from a green node.
             </p>
           </>
         ) : (
@@ -81,8 +86,10 @@ export function NodeInspector({ component }: { component: ComponentInfo }) {
             {JSON.stringify(
               {
                 component: component.id,
-                environment: "production simulation",
-                instrumentation: "mock",
+                kind: component.kind,
+                members: component.description,
+                environment: "production",
+                instrumentation: "r2m-sdk",
                 payload_capture: false,
               },
               null,

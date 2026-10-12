@@ -101,10 +101,10 @@ async def test_demo_reset_restores_state_and_closes_incidents(app):
     ops = await login(app, "ops@meridian.demo")
     overview = f"/api/v1/organizations/{MERIDIAN}/overview"
     assert (await ops.get(overview)).json()["metrics"]["unresolved_high_severity_findings"] == 1
-    reset = (await ops.post("/api/v1/demo/agent/scenarios/healthy/reset")).json()
+    reset = (await ops.post("/api/v1/operations/scenarios/healthy/reset")).json()
     assert reset["incidents_resolved"] == 1 and reset["service"]["health_status"] == "healthy"
     assert (await ops.get(overview)).json()["metrics"]["unresolved_high_severity_findings"] == 0
-    assert (await ops.get("/api/v1/demo/agent/state")).json()["services"][0]["error_rate_pct"] == 0.3
+    assert (await ops.get("/api/v1/operations/state")).json()["services"][0]["error_rate_pct"] == 0.3
     evidence = (await ops.get(f"/api/v1/agents/{AGENT}/evidence")).json()["items"]
     assert any(e["evidence_type"] == "demo_reset" for e in evidence)
-    assert (await ops.post("/api/v1/demo/agent/scenarios/nope/reset")).status_code == 404
+    assert (await ops.post("/api/v1/operations/scenarios/nope/reset")).status_code == 404

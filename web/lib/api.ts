@@ -1,5 +1,4 @@
 import type { ApiErrorBody } from "./types";
-import type { DemoState, AgentReply, LiveScenario } from "./live-types";
 export class ApiError extends Error {
   public status: number;
   public body: ApiErrorBody;
@@ -129,12 +128,12 @@ const post = <T = unknown>(path: string, body?: unknown) =>
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 // Unknown response bodies are intentional until each screen has a validated DTO adapter.
-// Never cast backend payloads to the local mock view models.
+// Never cast backend payloads straight to the UI view models; map them in lib/live-adapter.ts.
 export const api = {
   identities: () =>
-    request<{ identities: Identity[]; notice: string }>("/demo/identities"),
-  signIn: (email: string) => post("/demo/session", { email }),
-  signOut: () => request("/demo/session", { method: "DELETE" }),
+    request<{ identities: Identity[]; notice: string }>("/auth/identities"),
+  signIn: (email: string) => post("/auth/session", { email }),
+  signOut: () => request("/auth/session", { method: "DELETE" }),
   me: () => request<Session>("/me"),
   organizations: () => request("/organizations"),
   overview: (org: string, range = "24h") =>
@@ -191,17 +190,8 @@ export const api = {
     }),
   queryIntegration: (installation_id: string, question: string) =>
     post("/integrations/keewano/query", { installation_id, question }),
-  agentState: (installation?: string) =>
-    request<DemoState>(
-      `/demo/agent/state${installation ? `?installation_id=${id(installation)}` : ""}`,
-    ),
-  message: (message: string, scenario: LiveScenario, installation?: string) =>
-    post<AgentReply>(
-      `/demo/agent/message${installation ? `?installation_id=${id(installation)}` : ""}`,
-      { message, scenario },
-    ),
   resetScenario: (scenario: string, installation?: string) =>
     post(
-      `/demo/agent/scenarios/${id(scenario)}/reset${installation ? `?installation_id=${id(installation)}` : ""}`,
+      `/operations/scenarios/${id(scenario)}/reset${installation ? `?installation_id=${id(installation)}` : ""}`,
     ),
 };

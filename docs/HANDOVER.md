@@ -1,5 +1,7 @@
 # Backend handover (2026-10-11)
 
+> **Update:** R2M now ships as two apps in two containers: the Control Plane (`r2m`, :3000) and OpsPilot (`opspilot`, :3001). See the README's Architecture section.
+
 The backend is done and tested: 15 platform tests, including an end-to-end test with the real `r2m` SDK, plus a smoke test against the shared Aiven database. The shapes are defined in two contracts:
 - `docs/API_CONTRACT.md` for the browser and the agent hook
 - `docs/SDK_CONTRACT.md` for the SDK, plus the backend notes on it in `API_CONTRACT.md`
@@ -27,7 +29,7 @@ PYTHONPATH=python uvicorn r2m_platform.main:app --host 127.0.0.1 --port 8000
   ```
 - **Latency:** the shared Aiven service is about 420 ms per round trip from here, so pages take 1–3 s. That's the network, not your code.
 
-Demo identities (`GET /api/v1/demo/identities`):
+Demo identities (`GET /api/v1/auth/identities`):
 
 | Email | Org | Role |
 |---|---|---|
@@ -53,8 +55,8 @@ Demo identities (`GET /api/v1/demo/identities`):
 
 ### Auth and role switcher
 
-- **Login picker:** `GET /demo/identities`.
-- **Switch identity:** `POST /demo/session {email}`. Sign out with `DELETE /demo/session`.
+- **Login picker:** `GET /auth/identities`.
+- **Switch identity:** `POST /auth/session {email}`. Sign out with `DELETE /auth/session`.
 - **Who am I:** `GET /me` returns orgs, roles and `permissions` per org. Use the permissions to show or hide buttons, but the backend enforces them regardless.
 - Label it everywhere: **"Demo authentication, not production."**
 
@@ -73,7 +75,7 @@ Demo identities (`GET /api/v1/demo/identities`):
 | Security | `GET /agents/{id}/incidents` and `PATCH /incidents/{id} {status, note}` (resolve or investigate; feeds "unresolved findings") |
 | Evidence | `GET /agents/{id}/evidence` (`integrity_ok` per item) and `GET /agents/{id}/evidence/export` (customer security / release manager) |
 | Integrations | `GET/PUT /integrations/keewano`, `POST /integrations/keewano/query` |
-| `/demo/agent` | `GET /demo/agent/state`, `POST /demo/agent/message {message, scenario}`, `POST /demo/agent/scenarios/{id}/reset` |
+| Operations Desk (separate app, :3001) | Chat goes to the OpsPilot agent API: `POST /agent-api/message`, `GET /agent-api/state`, `POST /agent-api/scenarios/{id}/reset` (see `API_CONTRACT.md`) |
 
 ### Rules the spec cares about
 
@@ -82,8 +84,8 @@ Demo identities (`GET /api/v1/demo/identities`):
 - **Show the coverage explanation.** Display `policy_enforcement_coverage.explanation` next to the number; it's observed coverage, not proof.
 - **Out-of-scope is 404.** Treat it as "not found", never as "forbidden".
 - **Customer views are redacted.** When `redacted_for_customer` is true, trace attributes show `[vendor-private]`.
-- **A new agent build can't act until it's released.** It shows as `proposed`. The demo needs a release step: run evals, approve the policy, evaluate, deploy. Put that in `docs/DEMO_SCRIPT.md`.
-- **`/demo/agent/message` returns 503 `agent_unavailable`** until the AI developer's `mock_agent` lands.
+- **A new agent build can't act until it's released.** It shows as `proposed`. The demo needs a release step: run evals, approve the policy, evaluate, deploy. See the walkthrough in the README.
+- **The agent is a separate container** (`opspilot`, :3001). It reaches R2M only over HTTP with a per-customer SDK token; the platform no longer runs it in-process.
 
 ---
 
